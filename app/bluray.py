@@ -115,30 +115,45 @@ def parse_product(html: str) -> dict:
     if og and og.get("content"):
         cover = og["content"]
 
-    text = soup.get_text(" ")
-    preorder = "Available for pre-order" in text
-
-    price = None
-    buy_url = None
-    price_label = soup.find("span", class_="subheading", string="Price")
-    if price_label:
-        block = price_label.parent
-        b = block.find("b") if block else None
-        if b:
-            price = _clean(b.get_text())
-    buy = soup.find("a", id="movie_buylink")
-    if buy and buy.get("href"):
-        buy_url = buy["href"]
+    price, availability, buy_url = parse_price_block(html)
+    preorder = "available for pre-order" in (availability or "").lower()
 
     return {
         "is_steelbook": int(is_steelbook and is_4k),
         "preorder": int(preorder),
         "price": price,
+        "availability": availability,
         "buy_url": buy_url,
         "cover": cover,
         "release_date": release,
         "subtitle": subtitle,
     }
+
+
+def parse_price_block(html: str) -> tuple[str | None, str | None, str | None]:
+    """Price, availability text and buy link from the sidebar 'Price' block.
+
+    The block runs from the 'Price' heading to the next subheading. It may hold
+    only an eBay link, in which case all three are None.
+    """
+    start = html.find('<span class="subheading">Price</span>')
+    if start < 0:
+        return None, None, None
+    end = html.find('class="subheading', start + 10)
+    block = BeautifulSoup(html[start:end if end > 0 else start + 3000], "html.parser")
+    price = None
+    for b in block.find_all("b"):
+        text = _clean(b.get_text())
+        if re.fullmatch(r"\$[\d,]+(\.\d{2})?", text):
+            price = text
+            break
+    status = block.find("font", attrs={"color": "#006600"})
+    availability = _clean(status.get_text()).rstrip(",") if status else None
+    if availability:
+        availability = availability.split(",")[0].strip()
+    buy = block.find("a", id="movie_buylink")
+    buy_url = buy["href"] if buy and buy.get("href") else None
+    return price, availability, buy_url
 
 
 class BluRayClient:

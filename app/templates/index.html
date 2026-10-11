@@ -83,6 +83,7 @@
         <div class="badges">
           {% if r.preorder %}<span class="badge pre">Preorder live</span>{% endif %}
           {% if r.price %}<span class="badge">{{ r.price }}</span>{% endif %}
+          {% if r.availability and not r.preorder %}<span class="badge">{{ r.availability }}</span>{% endif %}
           {% if r.release_date and r.release_date < today %}<span class="badge">Released</span>{% endif %}
         </div>
         <div class="actions">

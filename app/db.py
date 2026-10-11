@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS releases (
     is_steelbook      INTEGER,               -- NULL until the product page is checked
     preorder          INTEGER NOT NULL DEFAULT 0,
     price             TEXT,
+    availability      TEXT,                  -- e.g. 'Available for pre-order', 'Currently unavailable'
     buy_url           TEXT,
     first_seen        TEXT NOT NULL,
     last_checked      TEXT,
@@ -63,6 +64,9 @@ class DB:
         self.path = path
         with self.conn() as c:
             c.executescript(SCHEMA)
+            cols = {r["name"] for r in c.execute("PRAGMA table_info(releases)")}
+            if "availability" not in cols:
+                c.execute("ALTER TABLE releases ADD COLUMN availability TEXT")
 
     @contextmanager
     def conn(self):
@@ -116,7 +120,7 @@ class DB:
         with self.conn() as c:
             c.execute(
                 """UPDATE releases SET is_steelbook=:is_steelbook, preorder=:preorder,
-                   price=:price, buy_url=:buy_url, cover=COALESCE(:cover, cover),
+                   price=:price, availability=:availability, buy_url=:buy_url, cover=COALESCE(:cover, cover),
                    release_date=COALESCE(:release_date, release_date), last_checked=:now,
                    preorder_seen_at=CASE WHEN :preorder=1 AND preorder_seen_at IS NULL
                                          THEN :now ELSE preorder_seen_at END

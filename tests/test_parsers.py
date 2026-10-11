@@ -33,6 +33,7 @@ def test_parse_product_preorder():
     assert p["is_steelbook"] == 1
     assert p["preorder"] == 1
     assert p["price"] == "$31.27"
+    assert p["availability"] == "Available for pre-order"
     assert p["release_date"] == "2026-11-17"
     assert p["buy_url"].startswith("https://www.blu-ray.com/link/click.php")
     assert p["cover"].endswith("421738_large.jpg")
@@ -53,3 +54,18 @@ def test_parse_product_not_steelbook():
 def test_reddit_filter():
     posts = [p for p in parse_feed(read("reddit.xml")) if is_relevant(p["title"])]
     assert [p["id"] for p in posts] == ["t3_aaa", "t3_ccc"]
+
+
+def test_parse_product_currently_unavailable():
+    p = parse_product(read("product_unavailable.html"))
+    assert p["preorder"] == 0
+    assert p["price"] == "$47.99"
+    assert p["availability"] == "Currently unavailable"
+
+
+def test_parse_product_ebay_only_has_no_price():
+    p = parse_product(read("product_ebay_only.html"))
+    assert p["price"] is None
+    assert p["availability"] is None
+    assert p["buy_url"] is None
+    assert p["preorder"] == 0
