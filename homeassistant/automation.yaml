@@ -1,0 +1,26 @@
+# Reference copy of the Home Assistant automation that receives tracker alerts.
+# It already exists in your Home Assistant as "Steelbook tracker notifications";
+# this file is only here so the setup can be recreated.
+alias: Steelbook tracker notifications
+description: >-
+  Forwards alerts from the steelbook-tracker container on Unraid (preorders,
+  daily digest, source failures) to the phone.
+mode: queued
+max: 20
+triggers:
+  - trigger: webhook
+    webhook_id: steelbook_tracker_CHANGE_ME
+    allowed_methods: [POST]
+    local_only: true
+actions:
+  - action: notify.mobile_app_pixel_10_pro_fold
+    data:
+      title: "{{ trigger.json.title }}"
+      message: "{{ trigger.json.message }}"
+      data:
+        clickAction: "{{ trigger.json.url | default('', true) }}"
+        image: "{{ trigger.json.image | default('', true) }}"
+        group: steelbooks
+        channel: "{{ 'Steelbook preorders' if trigger.json.type == 'preorder' else 'Steelbook tracker' }}"
+        priority: "{{ 'high' if trigger.json.type == 'preorder' else 'normal' }}"
+        tag: "{{ 'steelbook-' ~ trigger.json.type ~ '-' ~ (trigger.json.id | default('x', true)) }}"

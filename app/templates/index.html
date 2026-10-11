@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steelbook Tracker</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e3e3e0;
+    --accent: #2f6fde; --ok: #1f8a4c; --warn: #b26b00; --bad: #c0392b; --chip: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141416; --panel: #1d1d20; --text: #ececee; --muted: #9a9aa2; --line: #2c2c31;
+      --accent: #6b9bff; --ok: #4cc27f; --warn: #e0a040; --bad: #ff6b5b; --chip: #26272c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 20px 16px 8px; max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  nav { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 16px; max-width: 1200px; margin: 0 auto; }
+  nav a { text-decoration: none; color: var(--text); background: var(--chip); padding: 6px 12px;
+          border-radius: 999px; font-size: 14px; }
+  nav a.on { background: var(--accent); color: #fff; }
+  nav .spacer { flex: 1; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel);
+           color: var(--text); border-radius: 8px; padding: 5px 10px; font-size: 13px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.on { background: var(--ok); border-color: var(--ok); color: #fff; }
+  main { max-width: 1200px; margin: 0 auto; padding: 8px 16px 32px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+          display: flex; gap: 12px; padding: 10px; }
+  .card.done { opacity: .6; }
+  .cover { width: 72px; height: 88px; object-fit: cover; border-radius: 6px; background: var(--chip); flex: none; }
+  .body { min-width: 0; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .title { font-weight: 600; text-decoration: none; color: var(--text); }
+  .title:hover { text-decoration: underline; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--chip); }
+  .badge.pre { background: var(--ok); color: #fff; }
+  .actions { display: flex; gap: 6px; margin-top: auto; flex-wrap: wrap; }
+  .actions a { font-size: 13px; color: var(--accent); align-self: center; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  section.side { margin-top: 28px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  section.side > div { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin: 3px 0; font-size: 14px; }
+  li a { color: var(--text); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Steelbook Tracker</h1>
+  <div class="sub">
+    {{ counts.upcoming }} upcoming · {{ counts.preorder }} on preorder · {{ counts.purchased }} purchased
+    {% if last_run %} · last scan {{ last_run[:16].replace('T', ' ') }} UTC{% endif %}
+  </div>
+</header>
+<nav>
+  {% for key, label in views %}
+    <a href="?view={{ key }}" class="{{ 'on' if key == view }}">{{ label }}{% if counts.get(key) %} ({{ counts[key] }}){% endif %}</a>
+  {% endfor %}
+  <span class="spacer"></span>
+  <button id="scan" {{ 'disabled' if scanning }}>{{ 'Scanning…' if scanning else 'Scan now' }}</button>
+</nav>
+<main>
+  {% if releases %}
+  <div class="grid">
+    {% for r in releases %}
+    <div class="card {{ 'done' if r.purchased or r.hidden }}" data-id="{{ r.id }}">
+      {% if r.cover %}<img class="cover" src="{{ r.cover }}" alt="" loading="lazy">{% else %}<div class="cover"></div>{% endif %}
+      <div class="body">
+        <a class="title" href="{{ r.url }}" target="_blank" rel="noopener">{{ r.title }}</a>
+        {% if r.edition %}<div class="meta">{{ r.edition }}</div>{% endif %}
+        <div class="meta">{{ r.studio or '' }}{% if r.studio %} · {% endif %}{{ r.release_date or 'Date TBA' }}</div>
+        <div class="badges">
+          {% if r.preorder %}<span class="badge pre">Preorder live</span>{% endif %}
+          {% if r.price %}<span class="badge">{{ r.price }}</span>{% endif %}
+          {% if r.release_date and r.release_date < today %}<span class="badge">Released</span>{% endif %}
+        </div>
+        <div class="actions">
+          <button data-flag="purchased" data-value="{{ 0 if r.purchased else 1 }}" class="{{ 'on' if r.purchased }}">
+            {{ '✓ Purchased' if r.purchased else 'Mark purchased' }}</button>
+          <button data-flag="hidden" data-value="{{ 0 if r.hidden else 1 }}">{{ 'Unhide' if r.hidden else 'Hide' }}</button>
+          {% if r.buy_url %}<a href="{{ r.buy_url }}" target="_blank" rel="noopener">Buy</a>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+    <div class="empty">Nothing here yet{% if not last_run %}. The first scan runs a few seconds after startup and takes a while.{% endif %}</div>
+  {% endif %}
+
+  <section class="side">
+    <div>
+      <h2>From r/steelbooks</h2>
+      {% if community %}<ul>{% for c in community %}<li><a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.title }}</a></li>{% endfor %}</ul>
+      {% else %}<div class="meta">No drop or preorder posts seen yet.</div>{% endif %}
+    </div>
+    <div>
+      <h2>Sources</h2>
+      <ul>
+      {% for h in health %}
+        <li>{{ h.name }}:
+          {% if h.fail_count == 0 %}<span class="ok">OK</span>{% else %}<span class="bad">failing ({{ h.fail_count }}×)</span>{% endif %}
+          {% if h.fail_count and h.last_error %}<div class="meta">{{ h.last_error }}</div>{% endif %}
+        </li>
+      {% else %}<li class="meta">No scans yet.</li>{% endfor %}
+      </ul>
+      {% if last_result %}<div class="meta" style="margin-top:8px">{{ last_result }}</div>{% endif %}
+    </div>
+  </section>
+</main>
+<script>
+document.querySelectorAll('.card button[data-flag]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const id = btn.closest('.card').dataset.id;
+    btn.disabled = true;
+    const res = await fetch(`/api/releases/${id}/${btn.dataset.flag}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({value: btn.dataset.value === '1'})
+    });
+    if (res.ok) location.reload(); else btn.disabled = false;
+  });
+});
+document.getElementById('scan').addEventListener('click', async e => {
+  e.target.disabled = true; e.target.textContent = 'Scanning…';
+  await fetch('/api/scan', {method: 'POST'});
+});
+</script>
+</body>
+</html>
