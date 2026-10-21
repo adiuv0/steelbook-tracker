@@ -7,7 +7,7 @@ A small self-hosted service that watches for newly announced US 4K steelbooks, t
 Every few hours (default 4) it:
 
 1. Reads Blu-ray.com's search for "4k steelbook", sorted by newest additions and by newest preorders. Anything with an upcoming release date is stored.
-2. Opens each new product page to confirm it really is a 4K SteelBook and to see whether it is "Available for pre-order". Upcoming steelbooks that aren't on preorder yet are rechecked every 12 hours.
+2. Opens each new product page to confirm it really is a 4K SteelBook and to see whether it is "Available for pre-order". Newest listings are checked first, and upcoming steelbooks that aren't on preorder yet are rechecked every 12 hours. Listings that haven't been checked yet still show in the web UI, marked "Not verified yet". If a scan is cut short (Blu-ray.com stops answering for a bit), it pauses, reconnects and carries on, and anything left over is picked up by a follow-up scan 20 minutes later instead of at the next 4-hour scan.
 3. Reads the r/steelbooks RSS feed and keeps posts that look like drops, restocks or preorders (hauls and shelf photos are filtered out).
 
 Notifications go to a Home Assistant webhook:
@@ -52,6 +52,8 @@ Blu-ray.com only answers scripted requests that behave like a browser session (i
 | `SCAN_PAGES` / `SEED_PAGES` | `2` / `8` | Search pages read per scan / on the first run (20 results per page). |
 | `REQUEST_DELAY_MIN` / `MAX` | `4` / `9` | Seconds to wait between Blu-ray.com requests. |
 | `HEALTH_FAIL_THRESHOLD` | `3` | Consecutive failures before a "source failing" alert. |
+| `FAILURE_BACKOFF_SECONDS` | `60` | Pause after a failed product page before reconnecting (doubles on the next failure). |
+| `BACKLOG_RETRY_MINUTES` | `20` | When listings are still unchecked after a scan, run the next scan this soon. |
 | `REDDIT_ENABLED` | `true` | Include r/steelbooks posts. |
 
 Data lives in `/data/tracker.db` (SQLite). Back it up by copying the file.

@@ -24,7 +24,7 @@ def read(name: str) -> str:
 def tracker(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     s = replace(config.load(), ha_webhook_url=HA, request_delay_min=0, request_delay_max=0,
-                seed_pages=1, scan_pages=1)
+                seed_pages=1, scan_pages=1, failure_backoff_seconds=0)
     return Tracker(s, DB(s.db_path))
 
 
@@ -128,3 +128,61 @@ async def test_blocked_source_alerts_once(tracker):
         health = [p for p in sent(ha) if p["type"] == "health"]
     assert len(health) == 1
     assert "Blu-ray.com search" in health[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_connection_blip_does_not_end_the_batch(tracker):
+    """One failed product page pauses and carries on; it doesn't drop the rest."""
+    tracker.db.set_meta("seeded", "x")
+    with respx.mock(assert_all_called=False) as router:
+        ha = mock_sites(router, read("product_announced.html"))
+        # Newest listing is checked first and fails once with a connection error.
+        router.get("https://www.blu-ray.com/movies/Other-Mommy-4K-Blu-ray/422840/").mock(
+            side_effect=[httpx.ConnectError("All connection attempts failed"),
+                         httpx.Response(200, text=read("product_announced.html"))])
+        await tracker.run_scan()
+    with tracker.db.conn() as c:
+        checked = {r["id"] for r in c.execute("SELECT id FROM releases WHERE last_checked IS NOT NULL")}
+        unchecked = {r["id"] for r in c.execute("SELECT id FROM releases WHERE last_checked IS NULL")}
+    assert checked == {422773, 421959}
+    assert unchecked == {422840}
+    assert tracker.has_backlog()
+    assert [h["fail_count"] for h in tracker.db.health() if h["name"] == "Blu-ray.com product pages"] == [0]
+
+
+@pytest.mark.asyncio
+async def test_unchecked_listings_are_visible_and_checked_newest_first(tracker):
+    tracker.db.set_meta("seeded", "x")
+    with respx.mock(assert_all_called=False) as router:
+        router.get("https://www.blu-ray.com/").respond(200, text="home")
+        router.get(url__startswith="https://www.blu-ray.com/movies/search.php").respond(
+            200, text=read("search_simple.html"))
+        router.get(url__regex=r"https://www\.blu-ray\.com/movies/.+/\d+/$").mock(
+            side_effect=httpx.ConnectError("All connection attempts failed"))
+        router.get("https://www.reddit.com/r/steelbooks/new/.rss").respond(200, text=read("reddit.xml"))
+        router.post(HA).respond(200)
+        await tracker.run_scan()
+        product_calls = [str(c.request.url) for c in router.calls if "/movies/" in str(c.request.url)
+                         and "search.php" not in str(c.request.url)]
+    # Highest product id (newest listing) is tried first.
+    assert product_calls[0].endswith("/422840/")
+    rows = tracker.db.list_releases("upcoming", "2026-10-11")
+    assert {r["id"] for r in rows} == {422840, 422773, 421959}
+    assert all(r["is_steelbook"] is None for r in rows)
+    assert tracker.db.counts("2026-10-11")["unverified"] == 3
+
+
+@pytest.mark.asyncio
+async def test_seeded_listing_already_on_preorder_stays_quiet(tracker):
+    """A listing found during the quiet first scan but checked later doesn't alert
+    for a preorder that was already open; a genuinely new listing does."""
+    tracker.db.insert_release({"id": 1, "title": "Old 4K", "edition": None, "studio": None, "year": None,
+                               "release_date": "2026-12-01", "url": "https://x/1/"}, seeding=True)
+    tracker.db.insert_release({"id": 2, "title": "New 4K", "edition": None, "studio": None, "year": None,
+                               "release_date": "2026-12-01", "url": "https://x/2/"}, seeding=False)
+    product = {"is_steelbook": 1, "preorder": 1, "price": "$30.00", "availability": "Available for pre-order",
+               "buy_url": None, "cover": None, "release_date": None}
+    tracker.db.apply_product(1, product)
+    tracker.db.apply_product(2, product)
+    assert [r["id"] for r in tracker.db.pending_preorder_alerts()] == [2]
+    assert [r["id"] for r in tracker.db.pending_digest()] == [2]

@@ -179,6 +179,9 @@ class BluRayClient:
         self._client.cookies.set("listlayout_7", "simple", domain="www.blu-ray.com")
         await self._pause()
 
+    async def rewarm(self):
+        await self._warm()
+
     async def _pause(self):
         await asyncio.sleep(random.uniform(self.delay_min, self.delay_max))
 

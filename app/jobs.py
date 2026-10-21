@@ -70,21 +70,7 @@ class Tracker:
             recheck_before = (datetime.now(timezone.utc) - timedelta(hours=self.s.recheck_hours)).isoformat()
             limit = self.s.max_page_fetches * (5 if seeding else 1)
             rows = self.db.releases_needing_check(recheck_before, today.isoformat(), limit)
-            failures = 0
-            for row in rows:
-                try:
-                    product = await br.product(row["url"])
-                    self.db.apply_product(row["id"], product)
-                    checked += 1
-                except Exception as e:
-                    failures += 1
-                    log.warning("product check failed for %s: %s", row["url"], e)
-                    if failures >= 3:
-                        await self._fail(SOURCE_PRODUCT, e)
-                        break
-            else:
-                if rows:
-                    await self._ok(SOURCE_PRODUCT)
+            checked = await self._check_products(br, rows)
 
         # 3. Community posts.
         if self.s.reddit_enabled:
@@ -120,6 +106,44 @@ class Tracker:
                 sent += 1
         return f"Scan done: {new_count} new listings, {checked} product pages checked, {sent} preorder alerts."
 
+    async def _check_products(self, br: BluRayClient, rows) -> int:
+        """Check product pages, riding out short outages instead of giving up.
+
+        A failure pauses, opens a fresh session and carries on; only several
+        failures in a row end the batch. Whatever is left is picked up by the
+        follow-up scan (see has_backlog).
+        """
+        checked = 0
+        consecutive = 0
+        last_error: Exception | None = None
+        for row in rows:
+            try:
+                product = await br.product(row["url"])
+            except Exception as e:
+                consecutive += 1
+                last_error = e
+                log.warning("product check failed for %s: %s", row["url"], e)
+                if consecutive >= 3:
+                    break
+                await asyncio.sleep(self.s.failure_backoff_seconds * consecutive)
+                try:
+                    await br.rewarm()
+                except Exception as warm_error:
+                    log.warning("could not reopen blu-ray.com session: %s", warm_error)
+                continue
+            self.db.apply_product(row["id"], product)
+            checked += 1
+            consecutive = 0
+        if consecutive >= 3 and last_error is not None:
+            await self._fail(SOURCE_PRODUCT, last_error)
+        elif rows:
+            await self._ok(SOURCE_PRODUCT)
+        return checked
+
+    def has_backlog(self) -> bool:
+        """True when listings are still waiting for their first product-page check."""
+        return self.db.unchecked_count() > 0
+
     async def _scan_listing(self, br: BluRayClient, sortby: str, seeding: bool, today: date,
                             pages: int | None = None) -> int:
         """Walk listing pages. While seeding, keep going until a page has nothing upcoming."""
@@ -137,7 +161,7 @@ class Tracker:
                     continue
                 upcoming += 1
                 if self.db.get_release(item["id"]) is None:
-                    self.db.insert_release(item, digest_sent=False)
+                    self.db.insert_release(item, seeding=seeding)
                     new += 1
                 else:
                     self.db.update_listing(item)

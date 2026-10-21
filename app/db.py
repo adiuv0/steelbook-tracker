@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS releases (
     purchased         INTEGER NOT NULL DEFAULT 0,
     hidden            INTEGER NOT NULL DEFAULT 0,
     digest_sent       INTEGER NOT NULL DEFAULT 0,
-    preorder_notified INTEGER NOT NULL DEFAULT 0
+    preorder_notified INTEGER NOT NULL DEFAULT 0,
+    seeded            INTEGER NOT NULL DEFAULT 0  -- found during the first (quiet) scan
 );
 CREATE INDEX IF NOT EXISTS idx_releases_date ON releases(release_date);
 
@@ -54,6 +55,17 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 
+# Columns added after the first release; created on startup if missing.
+MIGRATIONS = [
+    ("availability", "TEXT"),
+    ("seeded", "INTEGER NOT NULL DEFAULT 0"),
+]
+
+# Rows not yet confirmed on their product page are shown too, flagged as unverified,
+# so a slow or interrupted check never hides a listing.
+LISTED = "(is_steelbook=1 OR is_steelbook IS NULL)"
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -65,8 +77,9 @@ class DB:
         with self.conn() as c:
             c.executescript(SCHEMA)
             cols = {r["name"] for r in c.execute("PRAGMA table_info(releases)")}
-            if "availability" not in cols:
-                c.execute("ALTER TABLE releases ADD COLUMN availability TEXT")
+            for name, ddl in MIGRATIONS:
+                if name not in cols:
+                    c.execute(f"ALTER TABLE releases ADD COLUMN {name} {ddl}")
 
     @contextmanager
     def conn(self):
@@ -97,13 +110,15 @@ class DB:
         with self.conn() as c:
             return c.execute("SELECT * FROM releases WHERE id=?", (rid,)).fetchone()
 
-    def insert_release(self, item: dict, *, digest_sent: bool) -> None:
+    def insert_release(self, item: dict, *, seeding: bool) -> None:
+        """Rows found while seeding go straight to 'already announced' (no digest)."""
         with self.conn() as c:
             c.execute(
                 """INSERT OR IGNORE INTO releases
-                   (id, title, edition, studio, year, release_date, url, first_seen, digest_sent)
-                   VALUES (:id, :title, :edition, :studio, :year, :release_date, :url, :first_seen, :digest_sent)""",
-                {**item, "first_seen": now_iso(), "digest_sent": int(digest_sent)},
+                   (id, title, edition, studio, year, release_date, url, first_seen, digest_sent, seeded)
+                   VALUES (:id, :title, :edition, :studio, :year, :release_date, :url, :first_seen,
+                           :seeded, :seeded)""",
+                {**item, "first_seen": now_iso(), "seeded": int(seeding)},
             )
 
     def update_listing(self, item: dict) -> None:
@@ -118,6 +133,13 @@ class DB:
 
     def apply_product(self, rid: int, product: dict) -> None:
         with self.conn() as c:
+            # A seeded listing that is already on preorder the first time it is checked
+            # was on preorder before the tracker existed: record it without an alert.
+            c.execute(
+                """UPDATE releases SET preorder_notified=1
+                   WHERE id=:id AND seeded=1 AND last_checked IS NULL AND :preorder=1""",
+                {"id": rid, "preorder": product["preorder"]},
+            )
             c.execute(
                 """UPDATE releases SET is_steelbook=:is_steelbook, preorder=:preorder,
                    price=:price, availability=:availability, buy_url=:buy_url, cover=COALESCE(:cover, cover),
@@ -138,10 +160,16 @@ class DB:
                            is_steelbook=1 AND preorder=0
                            AND (release_date IS NULL OR release_date >= ?)
                            AND last_checked < ?))
-                   ORDER BY last_checked IS NOT NULL, last_checked
+                   ORDER BY last_checked IS NOT NULL, last_checked, id DESC
                    LIMIT ?""",
                 (today, recheck_before, limit),
             ).fetchall()
+
+    def unchecked_count(self) -> int:
+        with self.conn() as c:
+            return c.execute(
+                "SELECT COUNT(*) FROM releases WHERE last_checked IS NULL AND hidden=0 AND purchased=0"
+            ).fetchone()[0]
 
     def pending_preorder_alerts(self) -> list[sqlite3.Row]:
         with self.conn() as c:
@@ -181,7 +209,7 @@ class DB:
         }.get(view, "hidden=0 AND purchased=0")
         with self.conn() as c:
             return c.execute(
-                f"""SELECT * FROM releases WHERE is_steelbook=1 AND {where}
+                f"""SELECT * FROM releases WHERE {LISTED} AND {where}
                     ORDER BY release_date IS NULL, release_date, title""",
                 {"today": today},
             ).fetchall()
@@ -194,8 +222,9 @@ class DB:
                      SUM(hidden=0 AND purchased=0 AND preorder=1) AS preorder,
                      SUM(purchased=1) AS purchased,
                      SUM(hidden=1) AS hidden,
+                     SUM(is_steelbook IS NULL) AS unverified,
                      COUNT(*) AS total
-                   FROM releases WHERE is_steelbook=1""",
+                   FROM releases WHERE {LISTED}""".format(LISTED=LISTED),
                 {"t": today},
             ).fetchone()
             return {k: (row[k] or 0) for k in row.keys()}
