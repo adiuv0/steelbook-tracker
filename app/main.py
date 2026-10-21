@@ -42,8 +42,14 @@ async def scan_loop():
         await asyncio.sleep(5)
         await tracker.run_scan()
     while True:
-        # Jitter so requests don't land on the same minute every time.
-        await asyncio.sleep(settings.poll_hours * 3600 + random.uniform(-600, 600))
+        if tracker.has_backlog():
+            # Listings still waiting for a product-page check (e.g. a scan was cut
+            # short): come back soon instead of waiting the full poll interval.
+            delay = settings.backlog_retry_minutes * 60
+        else:
+            # Jitter so requests don't land on the same minute every time.
+            delay = settings.poll_hours * 3600 + random.uniform(-600, 600)
+        await asyncio.sleep(delay)
         await tracker.run_scan()
 
 
@@ -93,6 +99,7 @@ async def index(request: Request, view: str = "upcoming"):
             "last_result": tracker.last_result,
             "scanning": tracker.lock.locked(),
             "today": today,
+            "notifications_configured": bool(settings.ha_webhook_url),
         },
     )
 
@@ -129,6 +136,7 @@ async def api_summary():
         "next_date": next_up["release_date"] if next_up else None,
         "last_run": tracker.last_run,
         "sources_failing": sum(1 for h in db.health() if h["fail_count"] > 0),
+        "notifications_configured": bool(settings.ha_webhook_url),
     }
 
 

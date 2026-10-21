@@ -33,6 +33,8 @@ class Settings:
     request_delay_min: float
     request_delay_max: float
     health_fail_threshold: int
+    failure_backoff_seconds: float
+    backlog_retry_minutes: int
     reddit_enabled: bool
     run_on_start: bool
 
@@ -55,6 +57,8 @@ def load() -> Settings:
         request_delay_min=float(os.environ.get("REQUEST_DELAY_MIN", 4)),
         request_delay_max=float(os.environ.get("REQUEST_DELAY_MAX", 9)),
         health_fail_threshold=max(1, _int("HEALTH_FAIL_THRESHOLD", 3)),
+        failure_backoff_seconds=float(os.environ.get("FAILURE_BACKOFF_SECONDS", 60)),
+        backlog_retry_minutes=max(5, _int("BACKLOG_RETRY_MINUTES", 20)),
         reddit_enabled=_bool("REDDIT_ENABLED", True),
         run_on_start=_bool("RUN_ON_START", True),
     )

@@ -60,6 +60,7 @@
   <h1>Steelbook Tracker</h1>
   <div class="sub">
     {{ counts.upcoming }} upcoming · {{ counts.preorder }} on preorder · {{ counts.purchased }} purchased
+    {% if counts.unverified %} · {{ counts.unverified }} still being checked{% endif %}
     {% if last_run %} · last scan {{ last_run[:16].replace('T', ' ') }} UTC{% endif %}
   </div>
 </header>
@@ -81,6 +82,7 @@
         {% if r.edition %}<div class="meta">{{ r.edition }}</div>{% endif %}
         <div class="meta">{{ r.studio or '' }}{% if r.studio %} · {% endif %}{{ r.release_date or 'Date TBA' }}</div>
         <div class="badges">
+          {% if r.is_steelbook is none %}<span class="badge">Not verified yet</span>{% endif %}
           {% if r.preorder %}<span class="badge pre">Preorder live</span>{% endif %}
           {% if r.price %}<span class="badge">{{ r.price }}</span>{% endif %}
           {% if r.availability and not r.preorder %}<span class="badge">{{ r.availability }}</span>{% endif %}
@@ -117,6 +119,7 @@
       {% else %}<li class="meta">No scans yet.</li>{% endfor %}
       </ul>
       {% if last_result %}<div class="meta" style="margin-top:8px">{{ last_result }}</div>{% endif %}
+      {% if not notifications_configured %}<div class="bad" style="margin-top:8px">Notifications are off: HA_WEBHOOK_URL is not set.</div>{% endif %}
     </div>
   </section>
 </main>
