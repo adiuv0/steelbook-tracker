@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>steelbook-tracker</Name>
-  <Repository>ghcr.io/adiuv0/steelbook-tracker:latest</Repository>
-  <Registry>https://github.com/adiuv0/steelbook-tracker/pkgs/container/steelbook-tracker</Registry>
+  <Repository>adiuv0/steelbook-tracker:latest</Repository>
+  <Registry>https://hub.docker.com/r/adiuv0/steelbook-tracker</Registry>
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
