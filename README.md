@@ -30,7 +30,7 @@ Blu-ray.com only answers scripted requests that behave like a browser session (i
 
 ## Install on Unraid
 
-1. The GitHub Action publishes `ghcr.io/adiuv0/steelbook-tracker:latest` on every push to `main`. If the repository is private, either make the package public (GitHub → your profile → Packages → steelbook-tracker → Package settings → Change visibility) or add a GHCR login on Unraid.
+1. The GitHub Action publishes the image on every push to `main`, to Docker Hub as `adiuv0/steelbook-tracker:latest` (the one the Unraid template uses) and to `ghcr.io/adiuv0/steelbook-tracker:latest`. Docker Hub publishing needs a repository secret named `DOCKERHUB_TOKEN`: create an access token with Read & Write scope at Docker Hub → Account settings → Personal access tokens, then add it under GitHub → steelbook-tracker → Settings → Secrets and variables → Actions. Without it the build still succeeds and only pushes to GHCR.
 2. Copy `unraid/steelbook-tracker.xml` to `/boot/config/plugins/dockerMan/templates-user/` on the Unraid flash drive.
 3. Docker tab → Add Container → pick **steelbook-tracker** from the template list.
 4. Fill in:
