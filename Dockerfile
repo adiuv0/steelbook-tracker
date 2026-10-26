@@ -1,5 +1,11 @@
 FROM python:3.12-slim
 
+# Unraid reads these for the Docker tab icon and the "WebUI" menu entry, so a
+# container added without the template still gets both.
+LABEL net.unraid.docker.webui="http://[IP]:[PORT:8787]/" \
+      net.unraid.docker.icon="https://raw.githubusercontent.com/adiuv0/steelbook-tracker/main/app/static/icon.png" \
+      org.opencontainers.image.source="https://github.com/adiuv0/steelbook-tracker"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DATA_DIR=/data \

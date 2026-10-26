@@ -36,7 +36,12 @@ Blu-ray.com only answers scripted requests that behave like a browser session (i
 4. Fill in:
    - **Home Assistant webhook URL**: `http://<home-assistant-ip>:8123/api/webhook/<webhook id>` (the webhook id is in the "Steelbook tracker notifications" automation's trigger).
    - **App URL**: `http://<unraid-ip>:8787`, so notifications can link back to the page.
-5. Apply. The web UI is at `http://<unraid-ip>:8787`. The first scan starts a few seconds after the container does and takes 10–20 minutes because it is deliberately slow.
+5. Apply. The web UI is at `http://<unraid-ip>:8787`, and clicking the container's icon on the Docker tab offers **WebUI** to open it. The first scan starts a few seconds after the container does and takes 10–20 minutes because it is deliberately slow.
+
+The template sets the icon and the WebUI link, and the image carries the same values as `net.unraid.docker.icon` / `net.unraid.docker.webui` labels. A container that was added before the template had them keeps its own saved copy of the template, so if the icon or WebUI entry is missing, edit the container, switch to **Advanced View**, and fill in:
+
+- **Icon URL**: `https://raw.githubusercontent.com/adiuv0/steelbook-tracker/main/app/static/icon.png`
+- **WebUI**: `http://[IP]:[PORT:8787]/`
 
 ## Settings
 
