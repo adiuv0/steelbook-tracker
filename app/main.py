@@ -8,7 +8,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -22,7 +23,8 @@ log = logging.getLogger("steelbook")
 settings = config.load()
 db = DB(settings.db_path)
 tracker = Tracker(settings, db)
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+HERE = Path(__file__).parent
+templates = Jinja2Templates(directory=str(HERE / "templates"))
 
 
 def _seconds_until(hhmm: str) -> float:
@@ -72,6 +74,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Steelbook Tracker", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
 VIEWS = [
     ("upcoming", "Upcoming"),
@@ -151,6 +154,11 @@ async def api_scan():
 @app.post("/api/digest")
 async def api_digest():
     return {"status": await tracker.send_digest(force=True)}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(HERE / "static" / "icon.png", media_type="image/png")
 
 
 @app.get("/healthz")
