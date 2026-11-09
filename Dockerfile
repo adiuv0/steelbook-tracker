@@ -6,13 +6,12 @@ LABEL net.unraid.docker.webui="http://[IP]:[PORT:8787]/" \
       net.unraid.docker.icon="https://raw.githubusercontent.com/adiuv0/steelbook-tracker/main/app/static/icon.png" \
       org.opencontainers.image.source="https://github.com/adiuv0/steelbook-tracker"
 
+# TZ sets the local time used for the daily digest. The base image already
+# includes the timezone database.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DATA_DIR=/data \
     TZ=America/Los_Angeles
-
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
