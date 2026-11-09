@@ -1,4 +1,7 @@
 -r requirements.txt
-pytest==8.3.4
-pytest-asyncio==0.25.0
-respx==0.22.0
+pytest==9.2.0
+pytest-asyncio==1.4.1
+respx==0.23.1
+# Starlette's test client (used by tests/test_web.py) now wants httpx2; the app
+# itself still uses httpx, which is what respx can mock.
+httpx2==2.16.0

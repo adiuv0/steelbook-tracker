@@ -4,28 +4,17 @@ Every event is POSTed as JSON to HA_WEBHOOK_URL. A Home Assistant automation
 (see homeassistant/automation.yaml) turns it into a phone notification.
 """
 
-import logging
-
 import httpx
 
-log = logging.getLogger(__name__)
+
+async def send(webhook_url: str, payload: dict) -> None:
+    """POST one event to the webhook. Raises if it does not go through."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(webhook_url, json=payload)
+        r.raise_for_status()
 
 
-async def send(webhook_url: str, payload: dict) -> bool:
-    if not webhook_url:
-        log.info("HA_WEBHOOK_URL not set; would have sent: %s", payload.get("title"))
-        return False
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(webhook_url, json=payload)
-            r.raise_for_status()
-        return True
-    except httpx.HTTPError as e:
-        log.error("Home Assistant webhook failed: %s", e)
-        return False
-
-
-def preorder_payload(row, app_url: str | None = None) -> dict:
+def preorder_payload(row) -> dict:
     when = row["release_date"] or "date TBA"
     price = f" · {row['price']}" if row["price"] else ""
     return {
@@ -43,11 +32,18 @@ def digest_payload(releases, community, app_url: str | None = None) -> dict:
     for r in releases:
         lines.append(f"• {r['title']}{_edition(r)} ({r['release_date'] or 'TBA'})")
     if community:
-        lines.append("")
+        if lines:
+            lines.append("")
         lines.append("From r/steelbooks:")
         lines.extend(f"• {c['title']}" for c in community)
     n = len(releases)
-    title = f"{n} new steelbook{'s' if n != 1 else ''} announced" if n else "Steelbook community news"
+    if n:
+        title = f"{n} new steelbook{'s' if n != 1 else ''} announced"
+    elif community:
+        title = "Steelbook community news"
+    else:  # only when a digest is asked for by hand
+        title = "Steelbook digest"
+        lines.append("Nothing new since the last digest.")
     return {
         "type": "digest",
         "title": title,

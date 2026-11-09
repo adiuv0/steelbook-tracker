@@ -12,6 +12,13 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
 def _bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -27,6 +34,7 @@ class Settings:
     poll_hours: int
     digest_time: str  # "HH:MM" in local TZ
     recheck_hours: int
+    preorder_recheck_hours: int
     max_page_fetches: int
     scan_pages: int
     seed_pages: int
@@ -51,13 +59,14 @@ def load() -> Settings:
         poll_hours=max(1, _int("POLL_HOURS", 4)),
         digest_time=os.environ.get("DIGEST_TIME", "09:00"),
         recheck_hours=max(1, _int("RECHECK_HOURS", 12)),
+        preorder_recheck_hours=max(1, _int("PREORDER_RECHECK_HOURS", 24)),
         max_page_fetches=max(1, _int("MAX_PAGE_FETCHES", 40)),
         scan_pages=max(1, _int("SCAN_PAGES", 2)),
         seed_pages=max(1, _int("SEED_PAGES", 8)),
-        request_delay_min=float(os.environ.get("REQUEST_DELAY_MIN", 4)),
-        request_delay_max=float(os.environ.get("REQUEST_DELAY_MAX", 9)),
+        request_delay_min=max(0.0, _float("REQUEST_DELAY_MIN", 4)),
+        request_delay_max=max(0.0, _float("REQUEST_DELAY_MAX", 9)),
         health_fail_threshold=max(1, _int("HEALTH_FAIL_THRESHOLD", 3)),
-        failure_backoff_seconds=float(os.environ.get("FAILURE_BACKOFF_SECONDS", 60)),
+        failure_backoff_seconds=max(0.0, _float("FAILURE_BACKOFF_SECONDS", 60)),
         backlog_retry_minutes=max(5, _int("BACKLOG_RETRY_MINUTES", 20)),
         reddit_enabled=_bool("REDDIT_ENABLED", True),
         run_on_start=_bool("RUN_ON_START", True),

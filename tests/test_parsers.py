@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from app.bluray import parse_product, parse_search, split_title
+import pytest
+
+from app.bluray import PageError, _encoding, parse_product, parse_search, split_title
+from app.notify import digest_payload
 from app.reddit import is_relevant, parse_feed
 
 FIX = Path(__file__).parent / "fixtures"
@@ -69,3 +72,35 @@ def test_parse_product_ebay_only_has_no_price():
     assert p["availability"] is None
     assert p["buy_url"] is None
     assert p["preorder"] == 0
+
+
+def test_parse_product_refuses_pages_that_are_not_product_pages():
+    """A block, captcha or maintenance page must not be read as 'not a steelbook'."""
+    with pytest.raises(PageError):
+        parse_product("<html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>")
+    with pytest.raises(PageError):
+        parse_product("")
+
+
+def test_parse_product_deleted_listing_is_dropped():
+    # What blu-ray.com returns (HTTP 200) for a product id that no longer exists.
+    gone = ('<html><head><meta name="robots" content="noindex,nofollow,noodp,noydir"></head>'
+            "<body>No such movie: 499999999</body></html>")
+    p = parse_product(gone)
+    assert p["is_steelbook"] == 0
+    assert p["preorder"] == 0
+
+
+def test_pages_without_a_charset_are_read_as_windows_1252():
+    assert _encoding(b"Am\xe9lie 4K (Limited Collector\x92s Edition)") == "cp1252"
+    assert _encoding("Amélie 4K".encode()) == "utf-8"
+    assert _encoding(b"Die Hard 4K") == "utf-8"
+
+
+def test_digest_asked_for_by_hand_with_nothing_new_says_so():
+    payload = digest_payload([], [])
+    assert payload["title"] == "Steelbook digest"
+    assert payload["message"] == "Nothing new since the last digest."
+    community_only = digest_payload([], [{"title": "Sinners restock at Target"}])
+    assert community_only["title"] == "Steelbook community news"
+    assert community_only["message"].startswith("From r/steelbooks:")

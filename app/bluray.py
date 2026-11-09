@@ -32,9 +32,31 @@ HEADERS = {
 
 PRODUCT_URL_RE = re.compile(r"^https://www\.blu-ray\.com/movies/[^/]+/(\d+)/$")
 
+# What a product URL returns once Blu-ray.com has deleted the listing (HTTP 200).
+GONE_MARKER = "No such movie"
+
 
 class BlockedError(RuntimeError):
     """Blu-ray.com refused the request even after a fresh session."""
+
+
+class SessionError(RuntimeError):
+    """A session with Blu-ray.com could not be opened at all."""
+
+
+class PageError(RuntimeError):
+    """A product URL answered with something that is not a product page."""
+
+
+def _encoding(content: bytes) -> str:
+    """Blu-ray.com sends no charset header and its pages are Windows-1252
+    (declared as ISO-8859-1), so accented letters and curly quotes are single
+    bytes that are not valid UTF-8."""
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        return "cp1252"
+    return "utf-8"
 
 
 def parse_date(text: str | None) -> str | None:
@@ -95,11 +117,22 @@ def parse_search(html: str) -> list[dict]:
 
 
 def parse_product(html: str) -> dict:
-    """Pull the bits we need from a product page."""
+    """Pull the bits we need from a product page.
+
+    Raises PageError when the page is not a product page at all (a block or
+    maintenance page, or a changed layout). Reading such a page as "not a
+    steelbook" would drop the listing for good, so it has to fail loudly.
+    """
     soup = BeautifulSoup(html, "html.parser")
-    title = _clean(soup.title.get_text()) if soup.title else ""
     subtitle_el = soup.find("span", class_="subheadingtitle")
-    subtitle = _clean(subtitle_el.get_text()) if subtitle_el else ""
+    if subtitle_el is None:
+        if GONE_MARKER in html[:2000]:
+            # The listing was deleted: stop tracking it.
+            return {"is_steelbook": 0, "preorder": 0, "price": None, "availability": None,
+                    "buy_url": None, "cover": None, "release_date": None}
+        raise PageError("not a product page")
+    title = _clean(soup.title.get_text()) if soup.title else ""
+    subtitle = _clean(subtitle_el.get_text())
     is_steelbook = "steelbook" in title.lower() or "steelbook" in subtitle.lower()
     is_4k = " 4K " in f" {title} " or "4K Ultra HD" in subtitle
 
@@ -126,7 +159,6 @@ def parse_product(html: str) -> dict:
         "buy_url": buy_url,
         "cover": cover,
         "release_date": release,
-        "subtitle": subtitle,
     }
 
 
@@ -163,8 +195,16 @@ class BluRayClient:
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self):
-        self._client = httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True)
-        await self._warm()
+        self._client = httpx.AsyncClient(
+            headers=HEADERS, timeout=30, follow_redirects=True, default_encoding=_encoding)
+        try:
+            await self._warm()
+        except BaseException as e:
+            await self._client.aclose()
+            if isinstance(e, Exception):
+                raise SessionError(
+                    f"could not open a blu-ray.com session ({type(e).__name__}: {e})") from e
+            raise
         return self
 
     async def __aexit__(self, *exc):
@@ -208,7 +248,10 @@ class BluRayClient:
         return parse_search(html)
 
     async def product(self, url: str) -> dict:
-        return parse_product(await self.get(url))
+        try:
+            return parse_product(await self.get(url))
+        except PageError:
+            raise PageError(f"{url} did not return a product page") from None
 
 
 def is_upcoming(release_date: str | None, today: date | None = None) -> bool:
