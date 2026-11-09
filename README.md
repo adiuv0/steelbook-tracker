@@ -7,7 +7,7 @@ A small self-hosted service that watches for newly announced US 4K steelbooks, t
 Every few hours (default 4) it:
 
 1. Reads Blu-ray.com's search for "4k steelbook", sorted by newest additions and by newest preorders. Anything with an upcoming release date is stored.
-2. Opens each new product page to confirm it really is a 4K SteelBook and to see whether it is "Available for pre-order". Newest listings are checked first, and upcoming steelbooks that aren't on preorder yet are rechecked every 12 hours. Listings that haven't been checked yet still show in the web UI, marked "Not verified yet". If a scan is cut short (Blu-ray.com stops answering for a bit), it pauses, reconnects and carries on, and anything left over is picked up by a follow-up scan 20 minutes later instead of at the next 4-hour scan.
+2. Opens each new product page to confirm it really is a 4K SteelBook and to see whether it is "Available for pre-order". Newest listings are checked first. Until a title is released its page keeps being rechecked: every 12 hours while it isn't on preorder, once a day after that (prices, release dates and availability still move), and straight away when it turns up in Blu-ray.com's newest-preorders list, so a preorder opening is normally caught by the next scan. Listings that haven't been checked yet still show in the web UI, marked "Not verified yet". If a scan is cut short (Blu-ray.com stops answering for a bit), it pauses, reconnects and carries on, and anything left over is picked up by a follow-up scan 20 minutes later instead of at the next 4-hour scan. Follow-ups that keep getting nowhere back off (40 minutes, 80, and so on, up to the normal interval).
 3. Reads the r/steelbooks RSS feed and keeps posts that look like drops, restocks or preorders (hauls and shelf photos are filtered out).
 
 Notifications go to a Home Assistant webhook:
@@ -20,13 +20,15 @@ Notifications go to a Home Assistant webhook:
 
 Anything you mark **Purchased** or **Hide** in the web UI stops generating alerts.
 
+If Home Assistant can't be reached, the alert is kept and sent on a later scan, and the failure is listed under **Sources** in the web UI. With no webhook set at all, alerts are only written to the container log and the page says notifications are off.
+
 The very first run is a quiet seed: it records everything already announced, then sends a single "tracker is running" message instead of dozens of alerts.
 
 ### Why only these sources
 
 Tested from a home connection in October 2026: Walmart serves a captcha, Amazon returns 503, Best Buy no longer sells discs, and HiDefNinja and Trackalacker sit behind Cloudflare. Blu-ray.com lists retailer exclusives (Walmart, Target, etc.) as separate editions, so those still show up there; r/steelbooks catches drops people post about.
 
-Blu-ray.com only answers scripted requests that behave like a browser session (it returns the text `error42` otherwise). The client opens the home page first to get a session cookie, waits 4–9 seconds between requests, and re-warms the session once if it gets blocked. If Blu-ray.com changes its layout the search will come back empty and you'll get a "source failing" alert.
+Blu-ray.com only answers scripted requests that behave like a browser session (it returns the text `error42` otherwise). The client opens the home page first to get a session cookie, waits 4–9 seconds between requests, and re-warms the session once if it gets blocked. If Blu-ray.com changes its layout, the search comes back empty or product pages stop being recognised; either way you get a "source failing" alert instead of wrong data.
 
 ## Install on Unraid
 
@@ -53,20 +55,23 @@ The template sets the icon and the WebUI link, and the image carries the same va
 | `DIGEST_TIME` | `09:00` | When the daily summary is sent. |
 | `POLL_HOURS` | `4` | Hours between scans (±10 minutes of jitter). |
 | `RECHECK_HOURS` | `12` | How often an upcoming steelbook's page is rechecked for a preorder. |
+| `PREORDER_RECHECK_HOURS` | `24` | How often a steelbook that is on preorder is rechecked (price, date, sold out) until it is released. |
 | `MAX_PAGE_FETCHES` | `40` | Product pages fetched per scan (5× on the first run). |
 | `SCAN_PAGES` / `SEED_PAGES` | `2` / `8` | Search pages read per scan / on the first run (20 results per page). |
-| `REQUEST_DELAY_MIN` / `MAX` | `4` / `9` | Seconds to wait between Blu-ray.com requests. |
+| `REQUEST_DELAY_MIN` / `REQUEST_DELAY_MAX` | `4` / `9` | Seconds to wait between Blu-ray.com requests. |
 | `HEALTH_FAIL_THRESHOLD` | `3` | Consecutive failures before a "source failing" alert. |
 | `FAILURE_BACKOFF_SECONDS` | `60` | Pause after a failed product page before reconnecting (doubles on the next failure). |
-| `BACKLOG_RETRY_MINUTES` | `20` | When listings are still unchecked after a scan, run the next scan this soon. |
+| `BACKLOG_RETRY_MINUTES` | `20` | When listings are still unchecked after a scan, run the next scan this soon (doubling while follow-ups make no progress). |
 | `REDDIT_ENABLED` | `true` | Include r/steelbooks posts. |
+| `RUN_ON_START` | `true` | Scan a few seconds after the container starts. |
+| `DATA_DIR` | `/data` | Where the database is kept. |
 
 Data lives in `/data/tracker.db` (SQLite). Back it up by copying the file.
 
 ## API
 
 - `GET /api/releases?view=upcoming|preorder|purchased|hidden|all` – JSON list.
-- `GET /api/summary` – counts and the next release, handy for a Home Assistant REST sensor.
+- `GET /api/summary` – counts, the next release, whether a scan is running and how many sources are failing; handy for a Home Assistant REST sensor.
 - `POST /api/releases/{id}/purchased` or `/hidden` with `{"value": true}`.
 - `POST /api/scan` – start a scan now. `POST /api/digest` – send the digest now.
 

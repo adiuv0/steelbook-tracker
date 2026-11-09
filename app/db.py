@@ -1,6 +1,7 @@
 """SQLite storage. One small file under DATA_DIR, safe to back up by copying."""
 
 import sqlite3
+from collections.abc import Iterable
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,6 +65,8 @@ MIGRATIONS = [
 # Rows not yet confirmed on their product page are shown too, flagged as unverified,
 # so a slow or interrupted check never hides a listing.
 LISTED = "(is_steelbook=1 OR is_steelbook IS NULL)"
+# Not out yet. Takes a :today parameter.
+UPCOMING = "(release_date IS NULL OR release_date >= :today)"
 
 
 def now_iso() -> str:
@@ -126,7 +129,7 @@ class DB:
         with self.conn() as c:
             c.execute(
                 """UPDATE releases SET title=:title, edition=:edition, studio=:studio,
-                   year=:year, release_date=COALESCE(:release_date, release_date)
+                   year=:year, url=:url, release_date=COALESCE(:release_date, release_date)
                    WHERE id=:id""",
                 item,
             )
@@ -150,19 +153,36 @@ class DB:
                 {**product, "id": rid, "now": now_iso()},
             )
 
-    def releases_needing_check(self, recheck_before: str, today: str, limit: int) -> list[sqlite3.Row]:
-        """Unchecked rows first, then upcoming steelbooks not yet on preorder."""
+    def releases_needing_check(self, *, today: str, recheck_before: str, preorder_recheck_before: str,
+                               limit: int, just_opened: Iterable[int] = (),
+                               just_opened_before: str = "") -> list[sqlite3.Row]:
+        """Rows due a product-page check, most urgent first.
+
+        1. Rows in ``just_opened``: Blu-ray.com lists them among its newest preorders
+           while we still show them as not on preorder. Skipped if checked since
+           ``just_opened_before``, so follow-up scans don't refetch them.
+        2. Rows never checked, newest listing first.
+        3. Upcoming steelbooks last checked before their cutoff: ``recheck_before``
+           while not on preorder, ``preorder_recheck_before`` once they are (price,
+           date and availability still move, just less urgently).
+        """
+        ids = sorted(set(just_opened))
+        if ids:
+            urgent = f"(id IN ({','.join('?' * len(ids))}) AND preorder=0 AND last_checked < ?)"
+            urgent_args = (*ids, just_opened_before)
+        else:
+            urgent, urgent_args = "0", ()
         with self.conn() as c:
             return c.execute(
-                """SELECT * FROM releases
-                   WHERE hidden=0 AND purchased=0 AND (
-                       last_checked IS NULL OR (
-                           is_steelbook=1 AND preorder=0
-                           AND (release_date IS NULL OR release_date >= ?)
-                           AND last_checked < ?))
-                   ORDER BY last_checked IS NOT NULL, last_checked, id DESC
-                   LIMIT ?""",
-                (today, recheck_before, limit),
+                f"""SELECT * FROM releases
+                    WHERE hidden=0 AND purchased=0 AND (
+                        last_checked IS NULL OR (is_steelbook=1 AND (
+                            {urgent}
+                            OR ((release_date IS NULL OR release_date >= ?)
+                                AND last_checked < CASE WHEN preorder=1 THEN ? ELSE ? END))))
+                    ORDER BY COALESCE({urgent}, 0) DESC, last_checked IS NOT NULL, last_checked, id DESC
+                    LIMIT ?""",
+                (*urgent_args, today, preorder_recheck_before, recheck_before, *urgent_args, limit),
             ).fetchall()
 
     def unchecked_count(self) -> int:
@@ -201,8 +221,10 @@ class DB:
 
     def list_releases(self, view: str, today: str) -> list[sqlite3.Row]:
         where = {
-            "upcoming": "hidden=0 AND purchased=0 AND (release_date IS NULL OR release_date >= :today)",
-            "preorder": "hidden=0 AND purchased=0 AND preorder=1",
+            "upcoming": f"hidden=0 AND purchased=0 AND {UPCOMING}",
+            # A preorder stops being one on release day; the flag itself is frozen
+            # then, because released titles are no longer rechecked.
+            "preorder": f"hidden=0 AND purchased=0 AND preorder=1 AND {UPCOMING}",
             "purchased": "purchased=1",
             "hidden": "hidden=1",
             "all": "1=1",
@@ -217,15 +239,15 @@ class DB:
     def counts(self, today: str) -> dict:
         with self.conn() as c:
             row = c.execute(
-                """SELECT
-                     SUM(hidden=0 AND purchased=0 AND (release_date IS NULL OR release_date >= :t)) AS upcoming,
-                     SUM(hidden=0 AND purchased=0 AND preorder=1) AS preorder,
-                     SUM(purchased=1) AS purchased,
-                     SUM(hidden=1) AS hidden,
-                     SUM(is_steelbook IS NULL) AS unverified,
-                     COUNT(*) AS total
-                   FROM releases WHERE {LISTED}""".format(LISTED=LISTED),
-                {"t": today},
+                f"""SELECT
+                      SUM(hidden=0 AND purchased=0 AND {UPCOMING}) AS upcoming,
+                      SUM(hidden=0 AND purchased=0 AND preorder=1 AND {UPCOMING}) AS preorder,
+                      SUM(purchased=1) AS purchased,
+                      SUM(hidden=1) AS hidden,
+                      SUM(is_steelbook IS NULL) AS unverified,
+                      COUNT(*) AS total
+                    FROM releases WHERE {LISTED}""",
+                {"today": today},
             ).fetchone()
             return {k: (row[k] or 0) for k in row.keys()}
 

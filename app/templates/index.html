@@ -64,7 +64,7 @@
   <div class="sub">
     {{ counts.upcoming }} upcoming · {{ counts.preorder }} on preorder · {{ counts.purchased }} purchased
     {% if counts.unverified %} · {{ counts.unverified }} still being checked{% endif %}
-    {% if last_run %} · last scan {{ last_run[:16].replace('T', ' ') }} UTC{% endif %}
+    {% if last_run %} · last scan <time datetime="{{ last_run }}">{{ last_run[:16].replace('T', ' ') }} UTC</time>{% endif %}
   </div>
 </header>
 <nav>
@@ -72,12 +72,13 @@
     <a href="?view={{ key }}" class="{{ 'on' if key == view }}">{{ label }}{% if counts.get(key) %} ({{ counts[key] }}){% endif %}</a>
   {% endfor %}
   <span class="spacer"></span>
-  <button id="scan" {{ 'disabled' if scanning }}>{{ 'Scanning…' if scanning else 'Scan now' }}</button>
+  <button id="scan" data-last-run="{{ last_run or '' }}" {{ 'disabled' if scanning }}>{{ 'Scanning…' if scanning else 'Scan now' }}</button>
 </nav>
 <main>
   {% if releases %}
   <div class="grid">
     {% for r in releases %}
+    {% set released = r.release_date and r.release_date < today %}
     <div class="card {{ 'done' if r.purchased or r.hidden }}" data-id="{{ r.id }}">
       {% if r.cover %}<img class="cover" src="{{ r.cover }}" alt="" loading="lazy">{% else %}<div class="cover"></div>{% endif %}
       <div class="body">
@@ -86,10 +87,11 @@
         <div class="meta">{{ r.studio or '' }}{% if r.studio %} · {% endif %}{{ r.release_date or 'Date TBA' }}</div>
         <div class="badges">
           {% if r.is_steelbook is none %}<span class="badge">Not verified yet</span>{% endif %}
-          {% if r.preorder %}<span class="badge pre">Preorder live</span>{% endif %}
+          {# Released titles are no longer rechecked, so their last preorder/stock status is stale. #}
+          {% if released %}<span class="badge">Released</span>
+          {% elif r.preorder %}<span class="badge pre">Preorder live</span>
+          {% elif r.availability %}<span class="badge">{{ r.availability }}</span>{% endif %}
           {% if r.price %}<span class="badge">{{ r.price }}</span>{% endif %}
-          {% if r.availability and not r.preorder %}<span class="badge">{{ r.availability }}</span>{% endif %}
-          {% if r.release_date and r.release_date < today %}<span class="badge">Released</span>{% endif %}
         </div>
         <div class="actions">
           <button data-flag="purchased" data-value="{{ 0 if r.purchased else 1 }}" class="{{ 'on' if r.purchased }}">
@@ -138,10 +140,28 @@ document.querySelectorAll('.card button[data-flag]').forEach(btn => {
     if (res.ok) location.reload(); else btn.disabled = false;
   });
 });
-document.getElementById('scan').addEventListener('click', async e => {
-  e.target.disabled = true; e.target.textContent = 'Scanning…';
-  await fetch('/api/scan', {method: 'POST'});
+// Show times in the viewer's own timezone.
+document.querySelectorAll('time[datetime]').forEach(t => {
+  const d = new Date(t.dateTime);
+  if (!isNaN(d)) t.textContent = d.toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'});
 });
+// Reload once a running scan has finished, so the button never sticks on "Scanning…".
+const scanBtn = document.getElementById('scan');
+function waitForScan() {
+  scanBtn.disabled = true; scanBtn.textContent = 'Scanning…';
+  const timer = setInterval(async () => {
+    try {
+      const s = await (await fetch('/api/summary')).json();
+      if (!s.scanning && (s.last_run || '') !== scanBtn.dataset.lastRun) { clearInterval(timer); location.reload(); }
+    } catch (e) { /* server restarting; keep waiting */ }
+  }, 5000);
+}
+scanBtn.addEventListener('click', async () => {
+  scanBtn.disabled = true;
+  await fetch('/api/scan', {method: 'POST'});
+  waitForScan();
+});
+if (scanBtn.disabled) waitForScan();
 </script>
 </body>
 </html>

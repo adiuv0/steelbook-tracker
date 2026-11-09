@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import random
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -25,15 +24,17 @@ db = DB(settings.db_path)
 tracker = Tracker(settings, db)
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
+background: set[asyncio.Task] = set()  # keeps manually started scans from being garbage-collected
 
 
-def _seconds_until(hhmm: str) -> float:
+def _seconds_until(hhmm: str, now: datetime | None = None) -> float:
+    """Seconds until the next HH:MM in local time; anything unreadable means 09:00."""
+    now = now or datetime.now()
     try:
         hour, minute = (int(x) for x in hhmm.split(":"))
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     except ValueError:
-        hour, minute = 9, 0
-    now = datetime.now()
-    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        target = now.replace(hour=9, minute=0, second=0, microsecond=0)
     if target <= now:
         target += timedelta(days=1)
     return (target - now).total_seconds()
@@ -44,13 +45,11 @@ async def scan_loop():
         await asyncio.sleep(5)
         await tracker.run_scan()
     while True:
-        if tracker.has_backlog():
-            # Listings still waiting for a product-page check (e.g. a scan was cut
-            # short): come back soon instead of waiting the full poll interval.
-            delay = settings.backlog_retry_minutes * 60
-        else:
-            # Jitter so requests don't land on the same minute every time.
-            delay = settings.poll_hours * 3600 + random.uniform(-600, 600)
+        try:
+            delay = tracker.next_scan_delay()
+        except Exception:  # e.g. the database is briefly locked; the loop must survive
+            log.exception("could not work out the next scan time")
+            delay = settings.poll_hours * 3600
         await asyncio.sleep(delay)
         await tracker.run_scan()
 
@@ -138,6 +137,7 @@ async def api_summary():
         "next_title": next_up["title"] if next_up else None,
         "next_date": next_up["release_date"] if next_up else None,
         "last_run": tracker.last_run,
+        "scanning": tracker.lock.locked(),
         "sources_failing": sum(1 for h in db.health() if h["fail_count"] > 0),
         "notifications_configured": bool(settings.ha_webhook_url),
     }
@@ -147,7 +147,9 @@ async def api_summary():
 async def api_scan():
     if tracker.lock.locked():
         return JSONResponse({"status": "already running"}, status_code=409)
-    asyncio.create_task(tracker.run_scan())
+    task = asyncio.create_task(tracker.run_scan())
+    background.add(task)
+    task.add_done_callback(background.discard)
     return {"status": "started"}
 
 
