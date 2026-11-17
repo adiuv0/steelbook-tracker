@@ -46,6 +46,8 @@
   .badges { display: flex; gap: 6px; flex-wrap: wrap; }
   .badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--chip); }
   .badge.pre { background: var(--ok); color: #fff; }
+  .badge.store { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+  .badge.out { background: transparent; border: 1px solid var(--warn); color: var(--warn); }
   .actions { display: flex; gap: 6px; margin-top: auto; flex-wrap: wrap; }
   .actions a { font-size: 13px; color: var(--accent); align-self: center; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
@@ -102,12 +104,19 @@
         <div class="meta">{{ r.studio or '' }}{% if r.studio %} · {% endif %}{{ r.release_date or 'Date TBA' }}</div>
         <div class="badges">
           {% if r.is_steelbook is none %}<span class="badge">Not verified yet</span>{% endif %}
-          {# Released titles are no longer rechecked, so their last preorder/stock status is stale. #}
+          {% if r.exclusive %}<span class="badge store">{{ r.exclusive }} exclusive</span>{% endif %}
+          {# Released titles are no longer rechecked, so their last preorder/stock status is stale,
+             except one that cannot be ordered: that is still watched for a restock. #}
           {% if released %}<span class="badge">Released</span>
-          {% elif r.preorder %}<span class="badge pre">Preorder live</span>
-          {% elif r.availability %}<span class="badge">{{ r.availability }}</span>{% endif %}
+          {% elif r.preorder %}<span class="badge pre">Preorder live</span>{% endif %}
+          {% if r.unavailable and r.availability %}<span class="badge out">{{ r.availability }}</span>
+          {% elif r.availability and not released and not r.preorder %}<span class="badge">{{ r.availability }}</span>{% endif %}
           {% if r.price %}<span class="badge">{{ r.price }}</span>{% endif %}
         </div>
+        {# The only stock Blu-ray.com reports is Amazon's. #}
+        {% if r.exclusive and r.exclusive != 'Amazon' and not r.availability and not released %}
+        <div class="meta">Sold only at {{ r.exclusive }}, whose stock the tracker can't see, so it can't alert you when this goes on sale.</div>
+        {% endif %}
         <div class="actions">
           <button data-flag="purchased" data-value="{{ 0 if r.purchased else 1 }}" class="{{ 'on' if r.purchased }}">
             {{ '✓ Purchased' if r.purchased else 'Mark purchased' }}</button>

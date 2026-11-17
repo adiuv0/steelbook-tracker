@@ -71,3 +71,33 @@ def test_digest_time_that_cannot_be_read_falls_back_to_nine():
     assert main._seconds_until("07:00", now) == 23 * 3600  # already past today
     for bad in ("", "9", "25:00", "09:75", "nine"):
         assert main._seconds_until(bad, now) == 3600, bad
+
+
+def card(page: str, title: str) -> str:
+    """One release's card, cut out of the page."""
+    start = page.index(f">{title}</a>")
+    end = page.find('<div class="card', start)
+    return page[start:end if end > 0 else page.index("</main>")]
+
+
+def test_cards_show_the_store_of_an_exclusive(client):
+    add(9010, "Street Fighter 4K", None, is_steelbook=1, preorder=1, exclusive="Amazon",
+        availability="Available for pre-order")
+    add(9011, "Gone with the Wind 4K", "2026-12-01", is_steelbook=1, exclusive="Walmart")
+    add(9012, "Resident Evil 4K", "2026-12-29", is_steelbook=1, unavailable=1, availability="Currently unavailable")
+
+    page = client.get("/").text
+    amazon = card(page, "Street Fighter 4K")
+    assert "Amazon exclusive" in amazon and "Preorder live" in amazon
+    assert "can't alert you" not in amazon
+    # Blu-ray.com has no stock for a Walmart exclusive, and the card says what that means.
+    walmart = card(page, "Gone with the Wind 4K")
+    assert "Walmart exclusive" in walmart
+    assert "Sold only at Walmart" in walmart and "can't alert you" in walmart
+    plain = card(page, "Resident Evil 4K")
+    assert "exclusive" not in plain
+    assert 'class="badge out">Currently unavailable' in plain
+
+    by_id = {r["id"]: r for r in client.get("/api/releases").json()}
+    assert by_id[9010]["exclusive"] == "Amazon"
+    assert by_id[9012]["exclusive"] is None and by_id[9012]["unavailable"] == 1

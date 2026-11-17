@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS releases (
     preorder          INTEGER NOT NULL DEFAULT 0,
     price             TEXT,
     availability      TEXT,                  -- e.g. 'Available for pre-order', 'Currently unavailable'
+    unavailable       INTEGER NOT NULL DEFAULT 0, -- the store last said it cannot be ordered
+    restock_pending   INTEGER NOT NULL DEFAULT 0, -- orderable again; alert not sent yet
+    exclusive         TEXT,                  -- the one store that sells this edition, e.g. 'Amazon'
     buy_url           TEXT,
     first_seen        TEXT NOT NULL,
     last_checked      TEXT,
@@ -60,6 +63,9 @@ CREATE TABLE IF NOT EXISTS meta (
 MIGRATIONS = [
     ("availability", "TEXT"),
     ("seeded", "INTEGER NOT NULL DEFAULT 0"),
+    ("unavailable", "INTEGER NOT NULL DEFAULT 0"),
+    ("restock_pending", "INTEGER NOT NULL DEFAULT 0"),
+    ("exclusive", "TEXT"),
 ]
 
 # Rows not yet confirmed on their product page are shown too, flagged as unverified,
@@ -83,6 +89,9 @@ class DB:
             for name, ddl in MIGRATIONS:
                 if name not in cols:
                     c.execute(f"ALTER TABLE releases ADD COLUMN {name} {ddl}")
+            if "unavailable" not in cols:
+                # Titles already known to be unavailable are watched for a restock from day one.
+                c.execute("UPDATE releases SET unavailable=1 WHERE lower(availability) LIKE '%unavailable%'")
 
     @contextmanager
     def conn(self):
@@ -136,53 +145,76 @@ class DB:
 
     def apply_product(self, rid: int, product: dict) -> None:
         with self.conn() as c:
-            # A seeded listing that is already on preorder the first time it is checked
-            # was on preorder before the tracker existed: record it without an alert.
-            c.execute(
-                """UPDATE releases SET preorder_notified=1
-                   WHERE id=:id AND seeded=1 AND last_checked IS NULL AND :preorder=1""",
-                {"id": rid, "preorder": product["preorder"]},
-            )
+            old = c.execute(
+                """SELECT seeded, last_checked, preorder_notified, unavailable, restock_pending
+                   FROM releases WHERE id=?""", (rid,)).fetchone()
+            if old is None:
+                return
+            notified = old["preorder_notified"]
+            if old["seeded"] and old["last_checked"] is None and product["preorder"]:
+                # A seeded listing that is already on preorder the first time it is checked
+                # was on preorder before the tracker existed: record it without an alert.
+                notified = 1
+            unavailable, restock = old["unavailable"], old["restock_pending"]
+            if product["orderable"] is False:
+                unavailable, restock = 1, 0  # (gone again before a pending alert went out)
+            elif product["orderable"]:
+                if unavailable:
+                    # It can be ordered again. A preorder that has never been announced
+                    # gets its normal "preorder live" alert instead of a second one.
+                    restock = 0 if product["preorder"] and not notified else 1
+                unavailable = 0
+            # No store status on the page (None): nothing is known, so nothing changes.
             c.execute(
                 """UPDATE releases SET is_steelbook=:is_steelbook, preorder=:preorder,
-                   price=:price, availability=:availability, buy_url=:buy_url, cover=COALESCE(:cover, cover),
+                   price=:price, availability=:availability, exclusive=:exclusive,
+                   buy_url=:buy_url, cover=COALESCE(:cover, cover),
                    release_date=COALESCE(:release_date, release_date), last_checked=:now,
                    preorder_seen_at=CASE WHEN :preorder=1 AND preorder_seen_at IS NULL
-                                         THEN :now ELSE preorder_seen_at END
+                                         THEN :now ELSE preorder_seen_at END,
+                   preorder_notified=:notified, unavailable=:unavailable, restock_pending=:restock
                    WHERE id=:id""",
-                {**product, "id": rid, "now": now_iso()},
+                {**product, "id": rid, "now": now_iso(), "notified": notified,
+                 "unavailable": unavailable, "restock": restock},
             )
 
     def releases_needing_check(self, *, today: str, recheck_before: str, preorder_recheck_before: str,
-                               limit: int, just_opened: Iterable[int] = (),
-                               just_opened_before: str = "") -> list[sqlite3.Row]:
+                               limit: int, just_opened: Iterable[int] = (), urgent_before: str = "",
+                               restock_watch_from: str | None = None) -> list[sqlite3.Row]:
         """Rows due a product-page check, most urgent first.
 
-        1. Rows in ``just_opened``: Blu-ray.com lists them among its newest preorders
-           while we still show them as not on preorder. Skipped if checked since
-           ``just_opened_before``, so follow-up scans don't refetch them.
+        1. Rows where a change is expected and timing matters. Skipped if checked
+           since ``urgent_before``, so follow-up scans don't refetch them.
+           - Rows in ``just_opened``: Blu-ray.com lists them among its newest
+             preorders while we still show them as not on preorder.
+           - Rows that cannot be ordered right now, to catch a restock. These are
+             watched past their release, back to ``restock_watch_from``.
         2. Rows never checked, newest listing first.
         3. Upcoming steelbooks last checked before their cutoff: ``recheck_before``
            while not on preorder, ``preorder_recheck_before`` once they are (price,
            date and availability still move, just less urgently).
         """
         ids = sorted(set(just_opened))
-        if ids:
-            urgent = f"(id IN ({','.join('?' * len(ids))}) AND preorder=0 AND last_checked < ?)"
-            urgent_args = (*ids, just_opened_before)
-        else:
-            urgent, urgent_args = "0", ()
+        listed = f"(id IN ({','.join(f':id{i}' for i in range(len(ids)))}) AND preorder=0)" if ids else "0"
+        urgent = f"""(({listed} OR (unavailable=1 AND (release_date IS NULL OR release_date >= :watch_from)))
+                      AND last_checked < :urgent_before)"""
+        params = {
+            **{f"id{i}": rid for i, rid in enumerate(ids)},
+            "today": today, "watch_from": restock_watch_from or today, "urgent_before": urgent_before,
+            "recheck_before": recheck_before, "preorder_recheck_before": preorder_recheck_before,
+            "limit": limit,
+        }
         with self.conn() as c:
             return c.execute(
                 f"""SELECT * FROM releases
                     WHERE hidden=0 AND purchased=0 AND (
                         last_checked IS NULL OR (is_steelbook=1 AND (
                             {urgent}
-                            OR ((release_date IS NULL OR release_date >= ?)
-                                AND last_checked < CASE WHEN preorder=1 THEN ? ELSE ? END))))
+                            OR ({UPCOMING} AND last_checked < CASE WHEN preorder=1
+                                THEN :preorder_recheck_before ELSE :recheck_before END))))
                     ORDER BY COALESCE({urgent}, 0) DESC, last_checked IS NOT NULL, last_checked, id DESC
-                    LIMIT ?""",
-                (*urgent_args, today, preorder_recheck_before, recheck_before, *urgent_args, limit),
+                    LIMIT :limit""",
+                params,
             ).fetchall()
 
     def unchecked_count(self) -> int:
@@ -201,6 +233,17 @@ class DB:
     def mark_preorder_notified(self, ids: list[int]) -> None:
         with self.conn() as c:
             c.executemany("UPDATE releases SET preorder_notified=1 WHERE id=?", [(i,) for i in ids])
+
+    def pending_restock_alerts(self) -> list[sqlite3.Row]:
+        with self.conn() as c:
+            return c.execute(
+                """SELECT * FROM releases WHERE is_steelbook=1 AND restock_pending=1
+                   AND hidden=0 AND purchased=0"""
+            ).fetchall()
+
+    def mark_restock_notified(self, ids: list[int]) -> None:
+        with self.conn() as c:
+            c.executemany("UPDATE releases SET restock_pending=0 WHERE id=?", [(i,) for i in ids])
 
     def pending_digest(self) -> list[sqlite3.Row]:
         with self.conn() as c:

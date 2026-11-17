@@ -4,7 +4,7 @@
 alias: Steelbook tracker notifications
 description: >-
   Forwards alerts from the steelbook-tracker container on Unraid (preorders,
-  daily digest, source failures) to the phone.
+  restocks, daily digest, source failures) to the phone.
 mode: queued
 max: 20
 triggers:
@@ -21,6 +21,6 @@ actions:
         clickAction: "{{ trigger.json.url | default('', true) }}"
         image: "{{ trigger.json.image | default('', true) }}"
         group: steelbooks
-        channel: "{{ 'Steelbook preorders' if trigger.json.type == 'preorder' else 'Steelbook tracker' }}"
-        priority: "{{ 'high' if trigger.json.type == 'preorder' else 'normal' }}"
+        channel: "{{ 'Steelbook preorders' if trigger.json.type in ['preorder', 'restock'] else 'Steelbook tracker' }}"
+        priority: "{{ 'high' if trigger.json.type in ['preorder', 'restock'] else 'normal' }}"
         tag: "{{ 'steelbook-' ~ trigger.json.type ~ '-' ~ (trigger.json.id | default('x', true)) }}"

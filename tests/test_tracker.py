@@ -33,6 +33,12 @@ def read(name: str) -> str:
 
 
 DIE_HARD_ON_PREORDER = read("product_preorder.html").replace("Braveheart", "Die Hard")
+DIE_HARD_IN_STOCK = DIE_HARD_ON_PREORDER.replace("Available for pre-order", "In Stock")
+DIE_HARD_UNAVAILABLE = read("product_unavailable.html").replace("Hook", "Die Hard")
+# A newest-preorders listing without Die Hard, so that listing isn't why Die Hard gets checked.
+OTHER_MOMMY_ONLY = '<html><body><table><tr><td width="3%"></td><td width="52%">' \
+    '<a href="https://www.blu-ray.com/movies/Other-Mommy-4K-Blu-ray/422840/">Other Mommy 4K</a></td>' \
+    '<td width="25%">Universal Studios</td><td width="20%">-</td></tr></table></body></html>'
 
 
 @pytest.fixture
@@ -457,8 +463,186 @@ def test_seeded_listing_already_on_preorder_stays_quiet(tracker):
     tracker.db.insert_release({"id": 2, "title": "New 4K", "edition": None, "studio": None, "year": None,
                                "release_date": "2026-12-01", "url": "https://x/2/"}, seeding=False)
     product = {"is_steelbook": 1, "preorder": 1, "price": "$30.00", "availability": "Available for pre-order",
-               "buy_url": None, "cover": None, "release_date": None}
+               "orderable": True, "exclusive": None, "buy_url": None, "cover": None, "release_date": None}
     tracker.db.apply_product(1, product)
     tracker.db.apply_product(2, product)
     assert [r["id"] for r in tracker.db.pending_preorder_alerts()] == [2]
     assert [r["id"] for r in tracker.db.pending_digest()] == [2]
+
+
+# --- restock alerts --------------------------------------------------------
+
+async def scan(tracker, die_hard_page: str) -> tuple[list[dict], str, int]:
+    """One scan with Die Hard's page as given: (alerts sent, result, times its page was fetched)."""
+    with respx.mock(assert_all_called=False) as router:
+        ha = mock_sites(router, die_hard_page, preorder_listing=OTHER_MOMMY_ONLY)
+        result = await tracker.run_scan()
+        return sent(ha), result, fetched(router, DIE_HARD)
+
+
+async def test_restock_alert_when_a_sold_out_preorder_can_be_ordered_again(tracker):
+    tracker.db.set_meta("seeded", "x")
+    alerts, _, _ = await scan(tracker, DIE_HARD_ON_PREORDER)
+    assert [p["type"] for p in alerts] == ["preorder"]
+
+    set_last_checked(tracker, hours_ago(25), 422773)
+    alerts, _, _ = await scan(tracker, DIE_HARD_UNAVAILABLE)
+    assert alerts == []  # selling out is not an alert
+    assert tracker.db.get_release(422773)["unavailable"] == 1
+
+    # From here on its page is read on every scan, not every 12 hours...
+    set_last_checked(tracker, hours_ago(3), 422773)
+    alerts, _, fetches = await scan(tracker, DIE_HARD_UNAVAILABLE)
+    assert (alerts, fetches) == ([], 1)
+    # ...but not again by a scan that follows straight after.
+    _, _, fetches = await scan(tracker, DIE_HARD_ON_PREORDER)
+    assert fetches == 0
+
+    set_last_checked(tracker, hours_ago(3), 422773)
+    alerts, result, _ = await scan(tracker, DIE_HARD_ON_PREORDER)
+    assert [p["type"] for p in alerts] == ["restock"]
+    assert alerts[0]["title"] == "Steelbook available to order"
+    assert alerts[0]["message"] == "Die Hard 4K · Available for pre-order · $31.27"
+    assert alerts[0]["url"].startswith("https://www.blu-ray.com/link/click.php")
+    assert "0 preorder alerts, 1 restock alerts." in result
+    row = tracker.db.get_release(422773)
+    assert (row["unavailable"], row["restock_pending"], row["preorder"]) == (0, 0, 1)
+
+    # Staying available is not news.
+    set_last_checked(tracker, hours_ago(25), 422773)
+    alerts, result, fetches = await scan(tracker, DIE_HARD_ON_PREORDER)
+    assert (alerts, fetches) == ([], 1)
+    assert "restock" not in result
+
+    # Selling out and coming back a second time alerts again.
+    set_last_checked(tracker, hours_ago(25), 422773)
+    await scan(tracker, DIE_HARD_UNAVAILABLE)
+    set_last_checked(tracker, hours_ago(3), 422773)
+    alerts, _, _ = await scan(tracker, DIE_HARD_IN_STOCK)
+    assert [p["type"] for p in alerts] == ["restock"]
+    assert "In Stock" in alerts[0]["message"]
+
+
+async def test_preorder_opening_for_the_first_time_is_not_also_a_restock(tracker):
+    """Amazon shows "Currently unavailable" before a preorder opens too. The first
+    opening gets the preorder alert only."""
+    tracker.db.set_meta("seeded", "x")
+    alerts, _, _ = await scan(tracker, DIE_HARD_UNAVAILABLE)
+    assert alerts == []
+    set_last_checked(tracker, hours_ago(3), 422773)
+    alerts, result, _ = await scan(tracker, DIE_HARD_ON_PREORDER)
+    assert [p["type"] for p in alerts] == ["preorder"]
+    assert "restock" not in result
+    assert tracker.db.pending_restock_alerts() == []
+
+
+async def test_title_that_was_never_on_preorder_alerts_when_it_comes_into_stock(tracker):
+    tracker.db.set_meta("seeded", "x")
+    await scan(tracker, DIE_HARD_UNAVAILABLE)
+    set_last_checked(tracker, hours_ago(3), 422773)
+    alerts, _, _ = await scan(tracker, DIE_HARD_IN_STOCK)
+    assert [p["type"] for p in alerts] == ["restock"]
+
+
+async def test_unavailable_titles_are_watched_for_a_while_after_release(tracker):
+    """Sold-out preorders often come back around the release date."""
+    tracker.db.set_meta("seeded", "x")
+    stale = dict(is_steelbook=1, unavailable=1, availability="Currently unavailable", last_checked=hours_ago(5))
+    add_release(tracker, 1, release_date="2026-10-01", **stale)   # out for 10 days
+    add_release(tracker, 2, release_date="2026-09-01", **stale)   # out for 40: past the 30-day watch
+    add_release(tracker, 3, release_date="2026-10-01", **{**stale, "unavailable": 0, "availability": "In Stock"})
+    movie = "https://www.blu-ray.com/movies/Movie-4K-Blu-ray/{}/"
+    with respx.mock(assert_all_called=False) as router:
+        ha = mock_sites(router, read("product_announced.html"), preorder_listing=OTHER_MOMMY_ONLY)
+        router.get(url__regex=ANY_PRODUCT).respond(200, text=DIE_HARD_IN_STOCK)
+        await tracker.run_scan()
+        assert [fetched(router, movie.format(n)) for n in (1, 2, 3)] == [1, 0, 0]
+        alerts = [p for p in sent(ha) if p["type"] == "restock"]
+    assert [p["id"] for p in alerts] == [1]
+
+    tracker.s = replace(tracker.s, restock_watch_days=0)  # off: nothing released is looked at
+    add_release(tracker, 4, release_date="2026-10-10", **stale)
+    with respx.mock(assert_all_called=False) as router:
+        mock_sites(router, read("product_announced.html"), preorder_listing=OTHER_MOMMY_ONLY)
+        router.get(url__regex=ANY_PRODUCT).respond(200, text=DIE_HARD_IN_STOCK)
+        await tracker.run_scan()
+        assert fetched(router, movie.format(4)) == 0
+
+
+async def test_restock_alert_is_kept_until_it_is_delivered(tracker):
+    tracker.db.set_meta("seeded", "x")
+    await scan(tracker, DIE_HARD_ON_PREORDER)
+    set_last_checked(tracker, hours_ago(25), 422773)
+    await scan(tracker, DIE_HARD_UNAVAILABLE)
+
+    set_last_checked(tracker, hours_ago(3), 422773)
+    with respx.mock(assert_all_called=False) as router:
+        mock_sites(router, DIE_HARD_ON_PREORDER, preorder_listing=OTHER_MOMMY_ONLY)
+        router.post(HA).respond(500)
+        result = await tracker.run_scan()
+    assert "not delivered" in result
+    assert ids(tracker.db.pending_restock_alerts()) == {422773}
+
+    alerts, _, _ = await scan(tracker, DIE_HARD_ON_PREORDER)  # Home Assistant is back
+    assert [p["type"] for p in alerts] == ["restock"]
+    assert tracker.db.pending_restock_alerts() == []
+
+
+async def test_undelivered_restock_alert_is_dropped_if_it_sells_out_again(tracker):
+    tracker.db.set_meta("seeded", "x")
+    await scan(tracker, DIE_HARD_ON_PREORDER)
+    set_last_checked(tracker, hours_ago(25), 422773)
+    await scan(tracker, DIE_HARD_UNAVAILABLE)
+    with tracker.db.conn() as c:  # as if a restock had been seen while Home Assistant was down
+        c.execute("UPDATE releases SET unavailable=0, restock_pending=1 WHERE id=422773")
+    set_last_checked(tracker, hours_ago(25), 422773)
+    alerts, _, _ = await scan(tracker, DIE_HARD_UNAVAILABLE)
+    assert alerts == []
+    assert tracker.db.pending_restock_alerts() == []
+
+
+async def test_store_exclusive_is_kept_and_named_in_the_alert(tracker):
+    tracker.db.set_meta("seeded", "x")
+    alerts, _, _ = await scan(tracker, read("product_amazon_exclusive.html"))
+    assert tracker.db.get_release(422773)["exclusive"] == "Amazon"
+    assert [p["type"] for p in alerts] == ["preorder"]
+    assert alerts[0]["message"] == "Die Hard 4K (2026-12-01) · $47.99 · Amazon exclusive"
+
+    # The label goes if Blu-ray.com drops it from the page.
+    set_last_checked(tracker, hours_ago(25), 422773)
+    await scan(tracker, DIE_HARD_ON_PREORDER)
+    assert tracker.db.get_release(422773)["exclusive"] is None
+
+
+def test_purchased_and_hidden_titles_get_no_restock_alert(tracker):
+    add_release(tracker, 1, is_steelbook=1, restock_pending=1, purchased=1)
+    add_release(tracker, 2, is_steelbook=1, restock_pending=1, hidden=1)
+    add_release(tracker, 3, is_steelbook=1, restock_pending=1)
+    assert ids(tracker.db.pending_restock_alerts()) == {3}
+    # And their pages are not read while they are set aside.
+    with tracker.db.conn() as c:
+        c.execute("UPDATE releases SET unavailable=1, last_checked=?", (hours_ago(5),))
+    due = tracker.db.releases_needing_check(
+        today=TODAY.isoformat(), recheck_before=hours_ago(12), preorder_recheck_before=hours_ago(24),
+        urgent_before=hours_ago(2), limit=10)
+    assert ids(due) == {3}
+
+
+def test_database_from_before_restock_alerts_starts_watching_what_is_unavailable(tmp_path):
+    path = tmp_path / "tracker.db"
+    db = DB(path)
+    for rid, status in ((1, "Currently unavailable"), (2, "Available for pre-order"), (3, None)):
+        db.insert_release({"id": rid, "title": f"Movie {rid} 4K", "edition": None, "studio": None, "year": None,
+                           "release_date": "2026-12-01", "url": f"https://x/{rid}/"}, seeding=True)
+        with db.conn() as c:
+            c.execute("UPDATE releases SET availability=?, is_steelbook=1 WHERE id=?", (status, rid))
+    with db.conn() as c:  # put the table back to how the previous version left it
+        for column in ("unavailable", "restock_pending", "exclusive"):
+            c.execute(f"ALTER TABLE releases DROP COLUMN {column}")
+
+    upgraded = DB(path)
+    rows = {r["id"]: r for r in upgraded.list_releases("all", TODAY.isoformat())}
+    assert [rows[n]["unavailable"] for n in (1, 2, 3)] == [1, 0, 0]
+    assert all(r["restock_pending"] == 0 and r["exclusive"] is None for r in rows.values())
+    DB(path)  # opening it again changes nothing
+    assert upgraded.get_release(2)["unavailable"] == 0

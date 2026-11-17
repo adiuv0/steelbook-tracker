@@ -96,8 +96,8 @@ class Tracker:
                 except Exception as e:
                     await self._fail(SOURCE_SEARCH, e)
 
-                # 2. Product pages: confirm steelbook/4K, watch for preorders opening,
-                #    keep price, date and availability current until release.
+                # 2. Product pages: confirm steelbook/4K, watch for preorders opening and
+                #    for restocks, keep price, date and availability current until release.
                 now = datetime.now(timezone.utc)
 
                 def ago(hours: float) -> str:
@@ -108,7 +108,8 @@ class Tracker:
                     recheck_before=ago(self.s.recheck_hours),
                     preorder_recheck_before=ago(self.s.preorder_recheck_hours),
                     just_opened=just_opened,
-                    just_opened_before=ago(self.s.poll_hours / 2),
+                    urgent_before=ago(self.s.poll_hours / 2),
+                    restock_watch_from=(today - timedelta(days=self.s.restock_watch_days)).isoformat(),
                     limit=self.s.max_page_fetches * (5 if seeding else 1),
                 )
                 backlog_before = self.db.unchecked_count()
@@ -162,9 +163,18 @@ class Tracker:
             self.db.mark_preorder_notified([row["id"]])
             self.db.mark_digest_sent([row["id"]])
             sent += 1
-        note = self._delivery_note(delivered) if sent or not delivered else ""
+        restocks = 0
+        if delivered:
+            for row in self.db.pending_restock_alerts():
+                delivered = await self._notify(notify.restock_payload(row))
+                if not delivered:
+                    break
+                self.db.mark_restock_notified([row["id"]])
+                restocks += 1
+        note = self._delivery_note(delivered) if sent or restocks or not delivered else ""
+        restock_text = f", {restocks} restock alerts" if restocks else ""
         return (f"Scan done: {new_count} new listings, {checked} product pages checked, "
-                f"{sent} preorder alerts{note}.")
+                f"{sent} preorder alerts{restock_text}{note}.")
 
     async def _check_products(self, br: BluRayClient, rows) -> int:
         """Check product pages, riding out short outages instead of giving up.

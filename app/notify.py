@@ -20,7 +20,21 @@ def preorder_payload(row) -> dict:
     return {
         "type": "preorder",
         "title": "Steelbook preorder live",
-        "message": f"{row['title']}{_edition(row)} ({when}){price}",
+        "message": f"{row['title']}{_edition(row)} ({when}){price}{_store(row)}",
+        "url": row["buy_url"] or row["url"],
+        "image": row["cover"],
+        "id": row["id"],
+    }
+
+
+def restock_payload(row) -> dict:
+    """A title that could not be ordered can be again (back on preorder or in stock)."""
+    status = f" · {row['availability']}" if row["availability"] else ""
+    price = f" · {row['price']}" if row["price"] else ""
+    return {
+        "type": "restock",
+        "title": "Steelbook available to order",
+        "message": f"{row['title']}{_edition(row)}{status}{price}{_store(row)}",
         "url": row["buy_url"] or row["url"],
         "image": row["cover"],
         "id": row["id"],
@@ -30,7 +44,7 @@ def preorder_payload(row) -> dict:
 def digest_payload(releases, community, app_url: str | None = None) -> dict:
     lines = []
     for r in releases:
-        lines.append(f"• {r['title']}{_edition(r)} ({r['release_date'] or 'TBA'})")
+        lines.append(f"• {r['title']}{_edition(r)} ({r['release_date'] or 'TBA'}){_store(r)}")
     if community:
         if lines:
             lines.append("")
@@ -66,3 +80,7 @@ def health_payload(source: str, error: str, recovered: bool = False) -> dict:
 
 def _edition(row) -> str:
     return f" ({row['edition']})" if row["edition"] else ""
+
+
+def _store(row) -> str:
+    return f" · {row['exclusive']} exclusive" if row["exclusive"] else ""
