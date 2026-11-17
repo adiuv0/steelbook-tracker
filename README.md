@@ -33,8 +33,11 @@ Blu-ray.com only answers scripted requests that behave like a browser session (i
 ## Install on Unraid
 
 1. The GitHub Action publishes the image on every push to `main`, to Docker Hub as `adiuv0/steelbook-tracker:latest` (the one the Unraid template uses) and to `ghcr.io/adiuv0/steelbook-tracker:latest`. Docker Hub publishing needs a repository secret named `DOCKERHUB_TOKEN`: create an access token with Read & Write scope at Docker Hub → Account settings → Personal access tokens, then add it under GitHub → steelbook-tracker → Settings → Secrets and variables → Actions. Without it the build still succeeds and only pushes to GHCR.
-2. Copy `unraid/steelbook-tracker.xml` to `/boot/config/plugins/dockerMan/templates-user/` on the Unraid flash drive.
-3. Docker tab → Add Container → pick **steelbook-tracker** from the template list.
+2. Copy `unraid/steelbook-tracker.xml` to `/boot/config/plugins/dockerMan/templates-user/` on the Unraid flash drive. From the Unraid terminal that is one line:
+   ```
+   wget -O /boot/config/plugins/dockerMan/templates-user/my-steelbook-tracker.xml https://raw.githubusercontent.com/adiuv0/steelbook-tracker/main/unraid/steelbook-tracker.xml
+   ```
+3. Docker tab → Add Container → pick **steelbook-tracker** from the template list. Don't add the container by typing the image name into a blank form: that leaves out the data folder, so the first update would start again from an empty database (see [Keeping your data](#keeping-your-data)).
 4. Fill in:
    - **Home Assistant webhook URL**: `http://<home-assistant-ip>:8123/api/webhook/<webhook id>` (the webhook id is in the "Steelbook tracker notifications" automation's trigger).
    - **App URL**: `http://<unraid-ip>:8787`, so notifications can link back to the page.
@@ -44,6 +47,26 @@ The template sets the icon and the WebUI link, and the image carries the same va
 
 - **Icon URL**: `https://raw.githubusercontent.com/adiuv0/steelbook-tracker/main/app/static/icon.png`
 - **WebUI**: `http://[IP]:[PORT:8787]/`
+
+## Keeping your data
+
+Everything the tracker knows, including what you marked **Purchased** or **Hide**, is one file: `/data/tracker.db` inside the container. Updating a container replaces it, so that file only survives when `/data` is mapped to a folder on the server. The template maps it to `/mnt/user/appdata/steelbook-tracker`.
+
+A container added without the template has no such mapping. Docker then keeps `/data` in a throwaway volume: everything works until the first update, which starts again from an empty database. The tracker checks for this when it starts. If the data folder isn't mapped, the web page shows a red warning at the top, the container log says `DATA IS NOT BEING KEPT`, and `/api/summary` reports `"data_persistent": false`.
+
+To fix a container that is already running without losing what's in it, **copy the database out before you change or update anything**. In the Unraid terminal (use your container's name if it isn't `steelbook-tracker`):
+
+```
+docker stop steelbook-tracker
+mkdir -p /mnt/user/appdata/steelbook-tracker
+docker cp steelbook-tracker:/data/tracker.db /mnt/user/appdata/steelbook-tracker/
+```
+
+Then on the Docker tab click the container's icon → **Edit** → **Add another Path, Port, Variable, Label or Device** and add:
+
+- Config Type **Path**, Container Path `/data`, Host Path `/mnt/user/appdata/steelbook-tracker`, Access Mode Read/Write.
+
+Click **Apply**. Unraid re-creates the container on top of the copied database, and the warning is gone. If the same container is also missing the **Home Assistant webhook URL** and **App URL** fields, add them in the same edit as Config Type **Variable** with keys `HA_WEBHOOK_URL` and `APP_URL`.
 
 ## Settings
 
@@ -66,12 +89,12 @@ The template sets the icon and the WebUI link, and the image carries the same va
 | `RUN_ON_START` | `true` | Scan a few seconds after the container starts. |
 | `DATA_DIR` | `/data` | Where the database is kept. |
 
-Data lives in `/data/tracker.db` (SQLite). Back it up by copying the file.
+Data lives in `/data/tracker.db` (SQLite). Back it up by copying the file. It has to be mapped to a folder on the server to survive updates: see [Keeping your data](#keeping-your-data).
 
 ## API
 
 - `GET /api/releases?view=upcoming|preorder|purchased|hidden|all` – JSON list.
-- `GET /api/summary` – counts, the next release, whether a scan is running and how many sources are failing; handy for a Home Assistant REST sensor.
+- `GET /api/summary` – counts, the next release, whether a scan is running, how many sources are failing, and `data_persistent` (`false` when the database would not survive a container update); handy for a Home Assistant REST sensor.
 - `POST /api/releases/{id}/purchased` or `/hidden` with `{"value": true}`.
 - `POST /api/scan` – start a scan now. `POST /api/digest` – send the digest now.
 

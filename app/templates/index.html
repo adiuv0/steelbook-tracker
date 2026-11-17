@@ -56,6 +56,11 @@
   li { margin: 3px 0; font-size: 14px; }
   li a { color: var(--text); }
   .ok { color: var(--ok); } .bad { color: var(--bad); }
+  .alert-wrap { max-width: 1200px; margin: 0 auto; padding: 8px 16px 0; }
+  .alert { padding: 10px 14px; border-radius: 12px; border: 1px solid var(--bad);
+           background: var(--panel); font-size: 14px; }
+  .alert strong { color: var(--bad); }
+  .alert a { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -67,6 +72,16 @@
     {% if last_run %} · last scan <time datetime="{{ last_run }}">{{ last_run[:16].replace('T', ' ') }} UTC</time>{% endif %}
   </div>
 </header>
+{% if data_persistent is false %}
+<div class="alert-wrap"><div class="alert" role="alert">
+  <strong>Your purchased and hidden marks are not being saved outside this container.</strong>
+  They will be lost the next time the container is updated or re-created. To keep them, map
+  <code>{{ data_dir }}</code> to a folder on the server (on Unraid: edit the container and add a Path with
+  container path <code>{{ data_dir }}</code> and host path <code>/mnt/user/appdata/steelbook-tracker</code>).
+  Copy the database out first, as described under
+  <a href="https://github.com/adiuv0/steelbook-tracker#keeping-your-data" target="_blank" rel="noopener">Keeping your data</a>.
+</div></div>
+{% endif %}
 <nav>
   {% for key, label in views %}
     <a href="?view={{ key }}" class="{{ 'on' if key == view }}">{{ label }}{% if counts.get(key) %} ({{ counts[key] }}){% endif %}</a>
