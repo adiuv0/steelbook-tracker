@@ -35,6 +35,9 @@ PRODUCT_URL_RE = re.compile(r"^https://www\.blu-ray\.com/movies/[^/]+/(\d+)/$")
 # What a product URL returns once Blu-ray.com has deleted the listing (HTTP 200).
 GONE_MARKER = "No such movie"
 
+# Stores that Blu-ray.com spells differently from the shop's own name.
+STORE_NAMES = {"wal-mart": "Walmart"}
+
 
 class BlockedError(RuntimeError):
     """Blu-ray.com refused the request even after a fresh session."""
@@ -84,6 +87,25 @@ def split_title(raw: str) -> tuple[str, str | None]:
     return raw, None
 
 
+def parse_exclusive(page_title: str) -> str | None:
+    """The one store an edition is sold at, from a product page title:
+    'Street Fighter 4K Blu-ray (Amazon Exclusive SteelBook)' -> 'Amazon'."""
+    for group in re.findall(r"\(([^()]*)\)", page_title):
+        for part in re.split(r"\s*[/|]\s*", group):
+            m = re.match(r"(.+?)\s+Exclusive\b", part.strip(), re.IGNORECASE)
+            if m:
+                store = _clean(m.group(1))
+                return STORE_NAMES.get(store.lower(), store)
+    return None
+
+
+def is_unavailable(availability: str | None) -> bool:
+    """True for the store's "cannot be ordered right now" ('Currently unavailable').
+    Everything else it reports (pre-order, in stock, temporarily out of stock)
+    still takes an order."""
+    return "unavailable" in (availability or "").lower()
+
+
 def parse_search(html: str) -> list[dict]:
     """Parse a search results page rendered with the 'simple' list layout."""
     soup = BeautifulSoup(html, "html.parser")
@@ -129,7 +151,8 @@ def parse_product(html: str) -> dict:
         if GONE_MARKER in html[:2000]:
             # The listing was deleted: stop tracking it.
             return {"is_steelbook": 0, "preorder": 0, "price": None, "availability": None,
-                    "buy_url": None, "cover": None, "release_date": None}
+                    "orderable": None, "exclusive": None, "buy_url": None, "cover": None,
+                    "release_date": None}
         raise PageError("not a product page")
     title = _clean(soup.title.get_text()) if soup.title else ""
     subtitle = _clean(subtitle_el.get_text())
@@ -156,6 +179,9 @@ def parse_product(html: str) -> dict:
         "preorder": int(preorder),
         "price": price,
         "availability": availability,
+        # Whether the store takes an order right now; None when the page has no store status.
+        "orderable": None if availability is None else not is_unavailable(availability),
+        "exclusive": parse_exclusive(title),
         "buy_url": buy_url,
         "cover": cover,
         "release_date": release,
@@ -182,7 +208,8 @@ def parse_price_block(html: str) -> tuple[str | None, str | None, str | None]:
     status = block.find("font", attrs={"color": "#006600"})
     availability = _clean(status.get_text()).rstrip(",") if status else None
     if availability:
-        availability = availability.split(",")[0].strip()
+        # "Currently unavailable, FREE shipping" and "Currently unavailable." are the same status.
+        availability = availability.split(",")[0].strip().rstrip(".") or None
     buy = block.find("a", id="movie_buylink")
     buy_url = buy["href"] if buy and buy.get("href") else None
     return price, availability, buy_url

@@ -7,7 +7,7 @@ A small self-hosted service that watches for newly announced US 4K steelbooks, t
 Every few hours (default 4) it:
 
 1. Reads Blu-ray.com's search for "4k steelbook", sorted by newest additions and by newest preorders. Anything with an upcoming release date is stored.
-2. Opens each new product page to confirm it really is a 4K SteelBook and to see whether it is "Available for pre-order". Newest listings are checked first. Until a title is released its page keeps being rechecked: every 12 hours while it isn't on preorder, once a day after that (prices, release dates and availability still move), and straight away when it turns up in Blu-ray.com's newest-preorders list, so a preorder opening is normally caught by the next scan. Listings that haven't been checked yet still show in the web UI, marked "Not verified yet". If a scan is cut short (Blu-ray.com stops answering for a bit), it pauses, reconnects and carries on, and anything left over is picked up by a follow-up scan 20 minutes later instead of at the next 4-hour scan. Follow-ups that keep getting nowhere back off (40 minutes, 80, and so on, up to the normal interval).
+2. Opens each new product page to confirm it really is a 4K SteelBook and to see whether it is "Available for pre-order". Newest listings are checked first. Until a title is released its page keeps being rechecked: every 12 hours while it isn't on preorder, once a day after that (prices, release dates and availability still move), and straight away when it turns up in Blu-ray.com's newest-preorders list, so a preorder opening is normally caught by the next scan. A title that can't be ordered ("Currently unavailable") is looked at on every scan instead, and for 30 days past its release, so you hear when it can be ordered again. Listings that haven't been checked yet still show in the web UI, marked "Not verified yet". If a scan is cut short (Blu-ray.com stops answering for a bit), it pauses, reconnects and carries on, and anything left over is picked up by a follow-up scan 20 minutes later instead of at the next 4-hour scan. Follow-ups that keep getting nowhere back off (40 minutes, 80, and so on, up to the normal interval).
 3. Reads the r/steelbooks RSS feed and keeps posts that look like drops, restocks or preorders (hauls and shelf photos are filtered out).
 
 Notifications go to a Home Assistant webhook:
@@ -15,6 +15,7 @@ Notifications go to a Home Assistant webhook:
 | When | What you get |
 | --- | --- |
 | A tracked steelbook's preorder goes live | Instant, high-priority push with price and a buy link |
+| A steelbook that couldn't be ordered can be again (back on preorder or in stock) | Instant, high-priority push with the new status, price and a buy link |
 | Daily at `DIGEST_TIME` | One summary of newly announced steelbooks plus relevant r/steelbooks posts |
 | A source fails 3 runs in a row | One "source failing" push, and one "recovered" push when it comes back |
 
@@ -23,6 +24,14 @@ Anything you mark **Purchased** or **Hide** in the web UI stops generating alert
 If Home Assistant can't be reached, the alert is kept and sent on a later scan, and the failure is listed under **Sources** in the web UI. With no webhook set at all, alerts are only written to the container log and the page says notifications are off.
 
 The very first run is a quiet seed: it records everything already announced, then sends a single "tracker is running" message instead of dozens of alerts.
+
+### Store exclusives, and what can't be alerted on
+
+Blu-ray.com names the store in a product's title ("Amazon Exclusive SteelBook", "Wal-Mart Exclusive SteelBook"). The tracker shows it as a badge on the card and adds it to alerts and the digest.
+
+The only stock Blu-ray.com reports is Amazon's. Preorder and restock alerts are therefore only possible for titles Amazon sells. An edition that is exclusive to Walmart or to a studio's own shop is still announced in the daily digest and listed with its store, but the tracker cannot tell when it goes on sale, and its card says so.
+
+Restocks are noticed at the next scan, so with the default settings an alert can be up to four hours behind. That catches a restock that lasts; one that sells out again within minutes will be missed. Lower `POLL_HOURS` to look more often.
 
 ### Why only these sources
 
@@ -79,6 +88,7 @@ Click **Apply**. Unraid re-creates the container on top of the copied database, 
 | `POLL_HOURS` | `4` | Hours between scans (±10 minutes of jitter). |
 | `RECHECK_HOURS` | `12` | How often an upcoming steelbook's page is rechecked for a preorder. |
 | `PREORDER_RECHECK_HOURS` | `24` | How often a steelbook that is on preorder is rechecked (price, date, sold out) until it is released. |
+| `RESTOCK_WATCH_DAYS` | `30` | How long after its release a title that can't be ordered is still watched for a restock. `0` stops watching at release. |
 | `MAX_PAGE_FETCHES` | `40` | Product pages fetched per scan (5× on the first run). |
 | `SCAN_PAGES` / `SEED_PAGES` | `2` / `8` | Search pages read per scan / on the first run (20 results per page). |
 | `REQUEST_DELAY_MIN` / `REQUEST_DELAY_MAX` | `4` / `9` | Seconds to wait between Blu-ray.com requests. |
@@ -100,7 +110,7 @@ Data lives in `/data/tracker.db` (SQLite). Back it up by copying the file. It ha
 
 ## Home Assistant
 
-`homeassistant/automation.yaml` is a reference copy of the automation that turns webhook calls into phone notifications. Preorder alerts use their own Android notification channel ("Steelbook preorders") so you can give them a louder sound in the Companion app.
+`homeassistant/automation.yaml` is a reference copy of the automation that turns webhook calls into phone notifications. Preorder and restock alerts use their own Android notification channel ("Steelbook preorders") so you can give them a louder sound in the Companion app. Each webhook call carries a `type`: `preorder`, `restock`, `digest`, `health` or `setup`.
 
 ## Development
 

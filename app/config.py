@@ -35,6 +35,7 @@ class Settings:
     digest_time: str  # "HH:MM" in local TZ
     recheck_hours: int
     preorder_recheck_hours: int
+    restock_watch_days: int
     max_page_fetches: int
     scan_pages: int
     seed_pages: int
@@ -60,6 +61,7 @@ def load() -> Settings:
         digest_time=os.environ.get("DIGEST_TIME", "09:00"),
         recheck_hours=max(1, _int("RECHECK_HOURS", 12)),
         preorder_recheck_hours=max(1, _int("PREORDER_RECHECK_HOURS", 24)),
+        restock_watch_days=max(0, _int("RESTOCK_WATCH_DAYS", 30)),
         max_page_fetches=max(1, _int("MAX_PAGE_FETCHES", 40)),
         scan_pages=max(1, _int("SCAN_PAGES", 2)),
         seed_pages=max(1, _int("SEED_PAGES", 8)),
