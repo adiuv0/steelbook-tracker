@@ -57,11 +57,37 @@ jobs:
             curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break
             sleep 1
           done
-          curl -fsS http://127.0.0.1:8787/api/summary
+          # No folder is mapped to /data here, and the app has to notice that.
+          summary=$(curl -fsS http://127.0.0.1:8787/api/summary)
+          echo "$summary"
+          grep -q '"data_persistent":false' <<<"$summary"
+          grep -q 'role="alert"' <<<"$(curl -fsS http://127.0.0.1:8787/)"
           curl -fsS -o /dev/null http://127.0.0.1:8787/
           curl -fsS -o /dev/null http://127.0.0.1:8787/static/icon.png
           # The digest time relies on the image's timezone data (default TZ is Pacific).
           docker exec smoke date +%Z | grep -Eq '^P[SD]T$'
+      - name: Check that a mapped data folder survives an update
+        run: |
+          # Mark something purchased, replace the container the way an update does,
+          # and expect the mark to still be there.
+          mkdir -p "$RUNNER_TEMP/data"
+          start() {
+            docker rm -f mapped >/dev/null 2>&1 || true
+            docker run -d --name mapped -p 8788:8787 -e RUN_ON_START=false -v "$RUNNER_TEMP/data:/data" steelbook-tracker:ci
+            for i in $(seq 1 30); do
+              curl -fsS http://127.0.0.1:8788/healthz >/dev/null 2>&1 && break
+              sleep 1
+            done
+          }
+          trap 'docker logs mapped' EXIT
+          start
+          grep -q '"data_persistent":true' <<<"$(curl -fsS http://127.0.0.1:8788/api/summary)"
+          docker exec mapped python -c "from app.main import db; db.insert_release({'id': 1, 'title': 'Smoke Test 4K', 'edition': None, 'studio': None, 'year': None, 'release_date': None, 'url': 'https://example.invalid/'}, seeding=True)"
+          curl -fsS -X POST -H 'Content-Type: application/json' -d '{"value": true}' http://127.0.0.1:8788/api/releases/1/purchased
+          start
+          summary=$(curl -fsS http://127.0.0.1:8788/api/summary)
+          echo "$summary"
+          grep -q '"purchased":1,' <<<"$summary"
       - uses: docker/login-action@v4
         if: env.PUBLISH == 'true'
         with:

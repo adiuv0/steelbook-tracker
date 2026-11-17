@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import config
+from . import config, storage
 from .db import DB
 from .jobs import Tracker
 
@@ -22,6 +22,12 @@ log = logging.getLogger("steelbook")
 settings = config.load()
 db = DB(settings.db_path)
 tracker = Tracker(settings, db)
+# Checked once: a container's mounts cannot change while it runs.
+data_storage = storage.check(settings.data_dir)
+if data_storage.persistent is False:
+    log.warning("DATA IS NOT BEING KEPT: %s. Purchased and hidden marks will be lost when the "
+                "container is updated. Map %s to a folder on the server (see the README).",
+                data_storage.detail, settings.data_dir)
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 background: set[asyncio.Task] = set()  # keeps manually started scans from being garbage-collected
@@ -102,6 +108,8 @@ async def index(request: Request, view: str = "upcoming"):
             "scanning": tracker.lock.locked(),
             "today": today,
             "notifications_configured": bool(settings.ha_webhook_url),
+            "data_persistent": data_storage.persistent,
+            "data_dir": str(settings.data_dir),
         },
     )
 
@@ -140,6 +148,8 @@ async def api_summary():
         "scanning": tracker.lock.locked(),
         "sources_failing": sum(1 for h in db.health() if h["fail_count"] > 0),
         "notifications_configured": bool(settings.ha_webhook_url),
+        # False: the database is not on a mapped folder and will not survive an update.
+        "data_persistent": data_storage.persistent,
     }
 
 
