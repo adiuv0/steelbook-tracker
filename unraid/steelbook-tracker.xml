@@ -8,7 +8,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/adiuv0/steelbook-tracker/issues</Support>
   <Project>https://github.com/adiuv0/steelbook-tracker</Project>
-  <Overview>Tracks upcoming 4K steelbook announcements and preorders (Blu-ray.com and r/steelbooks), sends alerts to Home Assistant, and lets you tick off what you've bought.</Overview>
+  <Overview>Tracks upcoming 4K steelbook announcements and preorders (from Blu-ray.com), sends alerts to Home Assistant, and lets you tick off what you've bought.</Overview>
   <Category>Tools: MediaApp:Video</Category>
   <WebUI>http://[IP]:[PORT:8787]/</WebUI>
   <Icon>https://raw.githubusercontent.com/adiuv0/steelbook-tracker/main/app/static/icon.png</Icon>
@@ -19,5 +19,4 @@
   <Config Name="Timezone" Target="TZ" Default="America/Los_Angeles" Mode="" Description="Timezone for the daily digest" Type="Variable" Display="always" Required="false" Mask="false">America/Los_Angeles</Config>
   <Config Name="Daily digest time" Target="DIGEST_TIME" Default="09:00" Mode="" Description="HH:MM, local time" Type="Variable" Display="always" Required="false" Mask="false">09:00</Config>
   <Config Name="Scan every (hours)" Target="POLL_HOURS" Default="4" Mode="" Description="How often to check sources" Type="Variable" Display="advanced" Required="false" Mask="false">4</Config>
-  <Config Name="Reddit feed" Target="REDDIT_ENABLED" Default="true" Mode="" Description="Include r/steelbooks drop and preorder posts in the digest" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
 </Container>

@@ -5,7 +5,6 @@ import pytest
 from app.bluray import (PageError, _encoding, is_unavailable, parse_exclusive, parse_price_block,
                         parse_product, parse_search, split_title)
 from app.notify import digest_payload, preorder_payload, restock_payload
-from app.reddit import is_relevant, parse_feed
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -55,11 +54,6 @@ def test_parse_product_not_steelbook():
     assert parse_product(read("product_not_steelbook.html"))["is_steelbook"] == 0
 
 
-def test_reddit_filter():
-    posts = [p for p in parse_feed(read("reddit.xml")) if is_relevant(p["title"])]
-    assert [p["id"] for p in posts] == ["t3_aaa", "t3_ccc"]
-
-
 def test_parse_product_currently_unavailable():
     p = parse_product(read("product_unavailable.html"))
     assert p["preorder"] == 0
@@ -101,12 +95,9 @@ def test_pages_without_a_charset_are_read_as_windows_1252():
 
 
 def test_digest_asked_for_by_hand_with_nothing_new_says_so():
-    payload = digest_payload([], [])
+    payload = digest_payload([])
     assert payload["title"] == "Steelbook digest"
     assert payload["message"] == "Nothing new since the last digest."
-    community_only = digest_payload([], [{"title": "Sinners restock at Target"}])
-    assert community_only["title"] == "Steelbook community news"
-    assert community_only["message"].startswith("From r/steelbooks:")
 
 
 def test_store_exclusives_are_read_from_the_page_title():
@@ -165,5 +156,5 @@ def test_alerts_name_the_store_of_an_exclusive():
     assert restock["type"] == "restock"
     assert restock["message"] == "Street Fighter 4K (Limited Edition) · In Stock · $47.99"
     assert restock["url"] == row["buy_url"]
-    digest = digest_payload([{**row, "exclusive": "Walmart", "release_date": "2026-11-03"}], [])
+    digest = digest_payload([{**row, "exclusive": "Walmart", "release_date": "2026-11-03"}])
     assert digest["message"] == "• Street Fighter 4K (2026-11-03) · Walmart exclusive"

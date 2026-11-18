@@ -5,7 +5,7 @@ import logging
 import random
 from datetime import date, datetime, timedelta, timezone
 
-from . import notify, reddit
+from . import notify
 from .bluray import BluRayClient, SessionError, is_upcoming
 from .config import Settings
 from .db import DB
@@ -14,8 +14,8 @@ log = logging.getLogger(__name__)
 
 SOURCE_SEARCH = "Blu-ray.com search"
 SOURCE_PRODUCT = "Blu-ray.com product pages"
-SOURCE_REDDIT = "r/steelbooks"
 SOURCE_HA = "Home Assistant webhook"
+SOURCES = (SOURCE_SEARCH, SOURCE_PRODUCT, SOURCE_HA)
 
 
 def describe(error: Exception) -> str:
@@ -31,6 +31,9 @@ class Tracker:
         self.last_run: str | None = None
         self.last_result: str | None = None
         self.stalled = 0  # scans in a row that left the backlog no smaller
+        # A source that was dropped while it was failing (r/steelbooks, when Reddit
+        # ended its RSS feeds) would otherwise stay listed as failing for good.
+        self.db.forget_sources_except(SOURCES)
 
     # --- public entry points ----------------------------------------------
     async def run_scan(self) -> str:
@@ -50,14 +53,12 @@ class Tracker:
 
     async def send_digest(self, force: bool = False) -> str:
         releases = self.db.pending_digest()
-        community = self.db.pending_community()
-        if not releases and not community and not force:
+        if not releases and not force:
             return "Nothing new for the digest."
-        delivered = await self._notify(notify.digest_payload(releases, community, self.s.app_url))
+        delivered = await self._notify(notify.digest_payload(releases, self.s.app_url))
         if delivered:
             self.db.mark_digest_sent([r["id"] for r in releases])
-            self.db.mark_community_sent([c["id"] for c in community])
-        return f"Digest: {len(releases)} releases, {len(community)} community posts{self._delivery_note(delivered)}."
+        return f"Digest: {len(releases)} releases{self._delivery_note(delivered)}."
 
     def has_backlog(self) -> bool:
         """True while the first scan is unfinished or listings still wait for their first check."""
@@ -125,16 +126,7 @@ class Tracker:
         else:
             self.stalled = 0
 
-        # 3. Community posts.
-        if self.s.reddit_enabled:
-            try:
-                for post in await reddit.fetch():
-                    self.db.insert_community(post, digest_sent=seeding)
-                await self._ok(SOURCE_REDDIT)
-            except Exception as e:
-                await self._fail(SOURCE_REDDIT, e)
-
-        # 4. Alerts.
+        # 3. Alerts.
         if seeding:
             if not listed:
                 # Without the listings there is nothing to seed. Finishing here would
