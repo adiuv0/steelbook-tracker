@@ -1,4 +1,4 @@
-"""End-to-end scans against mocked Blu-ray.com, Reddit and Home Assistant."""
+"""End-to-end scans against mocked Blu-ray.com and Home Assistant."""
 
 import json
 from dataclasses import replace
@@ -19,7 +19,6 @@ FIX = Path(__file__).parent / "fixtures"
 HA = "http://ha.local:8123/api/webhook/steelbooks"
 HOME = "https://www.blu-ray.com/"
 SEARCH = "https://www.blu-ray.com/movies/search.php"
-REDDIT = "https://www.reddit.com/r/steelbooks/new/.rss"
 DIE_HARD = "https://www.blu-ray.com/movies/Die-Hard-4K-Blu-ray/422773/"
 OTHER_MOMMY = "https://www.blu-ray.com/movies/Other-Mommy-4K-Blu-ray/422840/"
 BURBS = "https://www.blu-ray.com/movies/The-Burbs-4K-Blu-ray/421959/"
@@ -50,7 +49,7 @@ def tracker(tmp_path, monkeypatch):
 
 
 def mock_sites(router, die_hard_page: str, preorder_listing: str | None = None):
-    """Blu-ray.com, Reddit and Home Assistant. Both search listings return the same
+    """Blu-ray.com and Home Assistant. Both search listings return the same
     fixture page unless ``preorder_listing`` gives the newest-preorders one its own."""
     router.get(HOME).respond(200, text="<html>home</html>")
     if preorder_listing is not None:
@@ -59,7 +58,6 @@ def mock_sites(router, die_hard_page: str, preorder_listing: str | None = None):
     router.get(DIE_HARD).respond(200, text=die_hard_page)
     router.get(OTHER_MOMMY).respond(200, text=read("product_announced.html").replace("Die Hard", "Other Mommy"))
     router.get(BURBS).respond(200, text=read("product_not_steelbook.html"))
-    router.get(REDDIT).respond(200, text=read("reddit.xml"))
     return router.post(HA).respond(200)
 
 
@@ -150,7 +148,7 @@ async def test_new_announcement_goes_to_digest(tracker):
         payloads = sent(ha)
     assert len(payloads) == 1 and payloads[0]["type"] == "digest"
     assert payloads[0]["count"] == 2
-    assert "Interstellar in stock (Walmart)" in payloads[0]["message"]
+    assert "Die Hard 4K" in payloads[0]["message"] and "Other Mommy 4K" in payloads[0]["message"]
     assert tracker.db.pending_digest() == []
 
 
@@ -170,7 +168,6 @@ async def test_blocked_source_alerts_once(tracker, no_waiting):
     with respx.mock(assert_all_called=False) as router:
         router.get(HOME).respond(200, text="home")
         router.get(url__startswith=SEARCH).respond(200, text="error42")
-        router.get(REDDIT).respond(200, text=read("reddit.xml"))
         ha = router.post(HA).respond(200)
         for _ in range(4):
             await tracker.run_scan()
@@ -179,12 +176,11 @@ async def test_blocked_source_alerts_once(tracker, no_waiting):
     assert "Blu-ray.com search" in health[0]["message"]
 
 
-async def test_unreachable_site_is_reported_and_the_rest_of_the_run_still_happens(tracker):
+async def test_unreachable_site_is_reported_and_the_run_still_finishes(tracker):
     """Blu-ray.com not answering at all is the likeliest way for it to break."""
     tracker.db.set_meta("seeded", "x")
     with respx.mock(assert_all_called=False) as router:
         router.get(HOME).mock(side_effect=httpx.ConnectError("All connection attempts failed"))
-        router.get(REDDIT).respond(200, text=read("reddit.xml"))
         ha = router.post(HA).respond(200)
         for _ in range(4):
             result = await tracker.run_scan()
@@ -193,7 +189,6 @@ async def test_unreachable_site_is_reported_and_the_rest_of_the_run_still_happen
     assert len(health) == 1
     assert "Blu-ray.com search" in health[0]["message"]
     assert "ConnectError" in health[0]["message"]
-    assert len(tracker.db.pending_community()) == 2  # Reddit was still read
 
 
 async def test_first_scan_is_not_marked_done_when_the_listings_cannot_be_read(tracker, no_waiting):
@@ -201,7 +196,6 @@ async def test_first_scan_is_not_marked_done_when_the_listings_cannot_be_read(tr
     with respx.mock(assert_all_called=False) as router:
         router.get(HOME).respond(200, text="home")
         router.get(url__startswith=SEARCH).respond(200, text="error42")
-        router.get(REDDIT).respond(200, text=read("reddit.xml"))
         ha = router.post(HA).respond(200)
         result = await tracker.run_scan()
         assert result.startswith("First scan could not"), result
@@ -646,3 +640,31 @@ def test_database_from_before_restock_alerts_starts_watching_what_is_unavailable
     assert all(r["restock_pending"] == 0 and r["exclusive"] is None for r in rows.values())
     DB(path)  # opening it again changes nothing
     assert upgraded.get_release(2)["unavailable"] == 0
+
+
+async def test_scan_reads_only_blu_ray_and_home_assistant(tracker):
+    """Reddit ended its RSS feeds in November 2026, so r/steelbooks is no longer read.
+    A request to it would fail on every scan."""
+    with respx.mock(assert_all_called=False) as router:  # a request to anything else raises
+        mock_sites(router, read("product_announced.html"))
+        result = await tracker.run_scan()
+        asked = {call.request.url.host for call in router.calls}
+    assert result.startswith("Seeded"), result
+    assert asked == {"www.blu-ray.com", "ha.local"}
+    assert {h["name"] for h in tracker.db.health()} <= {"Blu-ray.com search", PRODUCT_HEALTH, HA_HEALTH}
+
+
+def test_source_that_was_dropped_while_failing_is_no_longer_listed(tmp_path, monkeypatch):
+    """r/steelbooks was failing when it was removed. A database from before that must
+    not go on showing it as a failing source."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    s = config.load()
+    db = DB(s.db_path)
+    for _ in range(3):
+        db.record_failure("r/steelbooks", "HTTPStatusError: Client error '404 Not Found'", 3)
+    db.record_ok("Blu-ray.com search")
+    db.record_failure(PRODUCT_HEALTH, "ReadTimeout", 3)
+
+    Tracker(s, db)
+
+    assert {h["name"]: h["fail_count"] for h in db.health()} == {"Blu-ray.com search": 0, PRODUCT_HEALTH: 1}

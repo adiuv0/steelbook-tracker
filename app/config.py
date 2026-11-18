@@ -44,7 +44,6 @@ class Settings:
     health_fail_threshold: int
     failure_backoff_seconds: float
     backlog_retry_minutes: int
-    reddit_enabled: bool
     run_on_start: bool
 
     @property
@@ -70,6 +69,5 @@ def load() -> Settings:
         health_fail_threshold=max(1, _int("HEALTH_FAIL_THRESHOLD", 3)),
         failure_backoff_seconds=max(0.0, _float("FAILURE_BACKOFF_SECONDS", 60)),
         backlog_retry_minutes=max(5, _int("BACKLOG_RETRY_MINUTES", 20)),
-        reddit_enabled=_bool("REDDIT_ENABLED", True),
         run_on_start=_bool("RUN_ON_START", True),
     )

@@ -35,14 +35,8 @@ CREATE TABLE IF NOT EXISTS releases (
 );
 CREATE INDEX IF NOT EXISTS idx_releases_date ON releases(release_date);
 
-CREATE TABLE IF NOT EXISTS community (
-    id          TEXT PRIMARY KEY,
-    title       TEXT NOT NULL,
-    url         TEXT NOT NULL,
-    published   TEXT,
-    first_seen  TEXT NOT NULL,
-    digest_sent INTEGER NOT NULL DEFAULT 0
-);
+-- Databases created before November 2026 also hold a `community` table of
+-- r/steelbooks posts. Nothing reads it any more.
 
 CREATE TABLE IF NOT EXISTS source_health (
     name       TEXT PRIMARY KEY,
@@ -294,30 +288,6 @@ class DB:
             ).fetchone()
             return {k: (row[k] or 0) for k in row.keys()}
 
-    # --- community --------------------------------------------------------
-    def insert_community(self, post: dict, *, digest_sent: bool) -> bool:
-        with self.conn() as c:
-            cur = c.execute(
-                """INSERT OR IGNORE INTO community(id, title, url, published, first_seen, digest_sent)
-                   VALUES (:id, :title, :url, :published, :first_seen, :digest_sent)""",
-                {**post, "first_seen": now_iso(), "digest_sent": int(digest_sent)},
-            )
-            return cur.rowcount > 0
-
-    def pending_community(self) -> list[sqlite3.Row]:
-        with self.conn() as c:
-            return c.execute("SELECT * FROM community WHERE digest_sent=0 ORDER BY published").fetchall()
-
-    def mark_community_sent(self, ids: list[str]) -> None:
-        with self.conn() as c:
-            c.executemany("UPDATE community SET digest_sent=1 WHERE id=?", [(i,) for i in ids])
-
-    def recent_community(self, limit: int = 15) -> list[sqlite3.Row]:
-        with self.conn() as c:
-            return c.execute(
-                "SELECT * FROM community ORDER BY published DESC LIMIT ?", (limit,)
-            ).fetchall()
-
     # --- source health ----------------------------------------------------
     def record_ok(self, name: str) -> bool:
         """Returns True when the source had been flagged broken and just recovered."""
@@ -350,3 +320,11 @@ class DB:
     def health(self) -> list[sqlite3.Row]:
         with self.conn() as c:
             return c.execute("SELECT * FROM source_health ORDER BY name").fetchall()
+
+    def forget_sources_except(self, names: Iterable[str]) -> None:
+        """Drop the health records of sources that are no longer read."""
+        names = list(names)
+        with self.conn() as c:
+            c.execute(
+                f"DELETE FROM source_health WHERE name NOT IN ({','.join('?' * len(names))})", names
+            )

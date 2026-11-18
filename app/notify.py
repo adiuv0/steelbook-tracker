@@ -41,20 +41,13 @@ def restock_payload(row) -> dict:
     }
 
 
-def digest_payload(releases, community, app_url: str | None = None) -> dict:
+def digest_payload(releases, app_url: str | None = None) -> dict:
     lines = []
     for r in releases:
         lines.append(f"• {r['title']}{_edition(r)} ({r['release_date'] or 'TBA'}){_store(r)}")
-    if community:
-        if lines:
-            lines.append("")
-        lines.append("From r/steelbooks:")
-        lines.extend(f"• {c['title']}" for c in community)
     n = len(releases)
     if n:
         title = f"{n} new steelbook{'s' if n != 1 else ''} announced"
-    elif community:
-        title = "Steelbook community news"
     else:  # only when a digest is asked for by hand
         title = "Steelbook digest"
         lines.append("Nothing new since the last digest.")

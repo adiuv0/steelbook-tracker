@@ -101,3 +101,9 @@ def test_cards_show_the_store_of_an_exclusive(client):
     by_id = {r["id"]: r for r in client.get("/api/releases").json()}
     assert by_id[9010]["exclusive"] == "Amazon"
     assert by_id[9012]["exclusive"] is None and by_id[9012]["unavailable"] == 1
+
+
+def test_page_lists_sources_and_no_reddit_posts(client):
+    page = client.get("/").text
+    assert "<h2>Sources</h2>" in page
+    assert "r/steelbooks" not in page

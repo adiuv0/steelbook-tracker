@@ -102,7 +102,6 @@ async def index(request: Request, view: str = "upcoming"):
             "releases": db.list_releases(view, today),
             "counts": db.counts(today),
             "health": db.health(),
-            "community": db.recent_community(),
             "last_run": tracker.last_run,
             "last_result": tracker.last_result,
             "scanning": tracker.lock.locked(),
