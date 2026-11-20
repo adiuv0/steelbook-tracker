@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"
+	xmlns:content="http://purl.org/rss/1.0/modules/content/"
+	xmlns:wfw="http://wellformedweb.org/CommentAPI/"
+	xmlns:dc="http://purl.org/dc/elements/1.1/"
+	xmlns:atom="http://www.w3.org/2005/Atom"
+	xmlns:sy="http://purl.org/rss/1.0/modules/syndication/"
+	xmlns:slash="http://purl.org/rss/1.0/modules/slash/"
+	>
+
+<channel>
+	<title>Steelbook &#8211; HD Report</title>
+	<atom:link href="https://hd-report.com/tag/steelbook/feed/" rel="self" type="application/rss+xml" />
+	<link>https://hd-report.com</link>
+	<description></description>
+	<lastBuildDate>Wed, 18 Nov 2026 00:22:13 +0000</lastBuildDate>
+	<language>en-US</language>
+	<sy:updatePeriod>
+	hourly	</sy:updatePeriod>
+	<sy:updateFrequency>
+	1	</sy:updateFrequency>
+
+<image>
+	<url>https://hd-report.com/wp-content/uploads/2019/06/cropped-hdr-550px-2-32x32.png</url>
+	<title>Steelbook &#8211; HD Report</title>
+	<link>https://hd-report.com</link>
+	<width>32</width>
+	<height>32</height>
+</image>
+	<item>
+		<title>Wildwood 4k UHD, Blu-ray, DVD &#038; SteelBook Release Dates &#038; Artwork Revealed</title>
+		<link>https://hd-report.com/2026/11/16/wildwood-4k-uhd-blu-ray-dvd-amp-steelbook-artwork-revealed/</link>
+					<comments>https://hd-report.com/2026/11/16/wildwood-4k-uhd-blu-ray-dvd-amp-steelbook-artwork-revealed/#respond</comments>
+
+		<dc:creator><![CDATA[HD Report]]></dc:creator>
+		<pubDate>Tue, 17 Nov 2026 03:18:41 +0000</pubDate>
+				<category><![CDATA[4k Blu-ray]]></category>
+		<category><![CDATA[Shout! Studios]]></category>
+		<category><![CDATA[Steelbook]]></category>
+		<category><![CDATA[Wildwood (2026)]]></category>
+		<guid isPermaLink="false">https://hd-report.com/?p=102155</guid>
+
+					<description><![CDATA[Shout! Studios has revealed the release date and artwork for the physical media editions of Wildwood (2026). [&#8230;]]]></description>
+
+					<wfw:commentRss>https://hd-report.com/2026/11/16/wildwood-4k-uhd-blu-ray-dvd-amp-steelbook-artwork-revealed/feed/</wfw:commentRss>
+			<slash:comments>0</slash:comments>
+
+			</item>
+		<item>
+		<title>The Odyssey 4k SteelBooks Are Sold Out. Here&#8217;s Where To Buy.</title>
+		<link>https://hd-report.com/2026/11/12/the-odyssey-4k-steelbooks-are-sold-out-heres-where-to-buy/</link>
+
+		<dc:creator><![CDATA[HD Report]]></dc:creator>
+		<pubDate>Thu, 12 Nov 2026 18:05:10 +0000</pubDate>
+				<category><![CDATA[4k Blu-ray]]></category>
+		<category><![CDATA[Steelbook]]></category>
+		<guid isPermaLink="false">https://hd-report.com/?p=102127</guid>
+
+					<description><![CDATA[Trimmed for the test. [&#8230;]]]></description>
+			</item>
+		<item>
+		<title>Wildwood (2026) Is Up For Pre-order On 4k UHD, Blu-ray, &amp;amp; Digital Plus A Limited SteelBook</title>
+		<link>https://hd-report.com/2026/10/24/wildwood-2026-is-up-for-pre-order-on-4k-uhd-blu-ray-digital-plus-a-limited-steelbook/</link>
+
+		<dc:creator><![CDATA[HD Report]]></dc:creator>
+		<pubDate>Sat, 24 Oct 2026 15:40:02 +0000</pubDate>
+				<category><![CDATA[Steelbook]]></category>
+		<guid isPermaLink="false">https://hd-report.com/?p=101644</guid>
+
+					<description><![CDATA[Trimmed for the test. [&#8230;]]]></description>
+			</item>
+	</channel>
+</rss>

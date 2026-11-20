@@ -1,6 +1,6 @@
 # Steelbook Tracker
 
-A small self-hosted service that watches for newly announced US 4K steelbooks, tells you when preorders open, and gives you a web page to tick off what you've bought. It runs as one Docker container (built for Unraid) and sends alerts through Home Assistant.
+A small self-hosted service that watches for newly announced US 4K steelbooks, tells you when preorders open or a shop has one in stock, and gives you a web page to tick off what you've bought. It runs as one Docker container (built for Unraid) and sends alerts through Home Assistant.
 
 ## What it does
 
@@ -8,6 +8,9 @@ Every few hours (default 4) it:
 
 1. Reads Blu-ray.com's search for "4k steelbook", sorted by newest additions and by newest preorders. Anything with an upcoming release date is stored.
 2. Opens each new product page to confirm it really is a 4K SteelBook and to see whether it is "Available for pre-order". Newest listings are checked first. Until a title is released its page keeps being rechecked: every 12 hours while it isn't on preorder, once a day after that (prices, release dates and availability still move), and straight away when it turns up in Blu-ray.com's newest-preorders list, so a preorder opening is normally caught by the next scan. A title that can't be ordered ("Currently unavailable") is looked at on every scan instead, and for 30 days past its release, so you hear when it can be ordered again. Listings that haven't been checked yet still show in the web UI, marked "Not verified yet". If a scan is cut short (Blu-ray.com stops answering for a bit), it pauses, reconnects and carries on, and anything left over is picked up by a follow-up scan 20 minutes later instead of at the next 4-hour scan. Follow-ups that keep getting nowhere back off (40 minutes, 80, and so on, up to the normal interval).
+3. Reads HD Report's steelbook headlines, for the daily digest.
+
+Every hour (default) it also reads the 4K steelbooks that [three shops](#the-shops) list themselves, and whether each can be ordered.
 
 Notifications go to a Home Assistant webhook:
 
@@ -15,10 +18,12 @@ Notifications go to a Home Assistant webhook:
 | --- | --- |
 | A tracked steelbook's preorder goes live | Instant, high-priority push with price and a buy link |
 | A steelbook that couldn't be ordered can be again (back on preorder or in stock) | Instant, high-priority push with the new status, price and a buy link |
-| Daily at `DIGEST_TIME` | One summary of newly announced steelbooks |
+| A watched shop lists a new 4K steelbook that can be ordered | Instant, high-priority push with the price and a link to the shop. Several new titles at one shop arrive as one push. |
+| A 4K steelbook at a watched shop couldn't be ordered and now can | Instant, high-priority push, at most once a day per title |
+| Daily at `DIGEST_TIME` | One summary of newly announced steelbooks and new steelbook headlines |
 | A source fails 3 runs in a row | One "source failing" push, and one "recovered" push when it comes back |
 
-Anything you mark **Purchased** or **Hide** in the web UI stops generating alerts.
+Anything you mark **Purchased** or **Hide** in the web UI stops generating alerts from Blu-ray.com. The shops' alerts are separate: a shop's listing isn't matched to a card, so marking a title doesn't silence a restock of it at a shop.
 
 If Home Assistant can't be reached, the alert is kept and sent on a later scan, and the failure is listed under **Sources** in the web UI. With no webhook set at all, alerts are only written to the container log and the page says notifications are off.
 
@@ -28,13 +33,39 @@ The very first run is a quiet seed: it records everything already announced, the
 
 Blu-ray.com names the store in a product's title ("Amazon Exclusive SteelBook", "Wal-Mart Exclusive SteelBook"). The tracker shows it as a badge on the card and adds it to alerts and the digest.
 
-The only stock Blu-ray.com reports is Amazon's. Preorder and restock alerts are therefore only possible for titles Amazon sells. An edition that is exclusive to Walmart or to a studio's own shop is still announced in the daily digest and listed with its store, but the tracker cannot tell when it goes on sale, and its card says so.
+The only stock Blu-ray.com reports is Amazon's. Its preorder and restock alerts are therefore only possible for titles Amazon sells. An edition that is exclusive to Walmart, Target or another store the tracker can't read is still announced in the daily digest and listed with its store, but the tracker cannot tell when it goes on sale, and its card says so. An exclusive of a [watched shop](#the-shops) is covered from the shop's side instead.
 
 Restocks are noticed at the next scan, so with the default settings an alert can be up to four hours behind. That catches a restock that lasts; one that sells out again within minutes will be missed. Lower `POLL_HOURS` to look more often.
 
-### Why only Blu-ray.com
+### The shops
 
-Tested from a home connection in October 2026: Walmart serves a captcha, Amazon returns 503, Best Buy no longer sells discs, and HiDefNinja and Trackalacker sit behind Cloudflare. Blu-ray.com lists retailer exclusives (Walmart, Target, etc.) as separate editions, so those still show up there.
+Three shops publish their catalogue in a form a script may read, with the shop's own "can be ordered" flag on every product:
+
+| Shop | What is read | Setting name |
+| --- | --- | --- |
+| [Gruv](https://www.gruv.com/collections/4k-steelbooks) | Its "4K Steelbooks" collection, about 240 titles from Universal, Warner Bros., Shout! Factory, AMC and others | `gruv` |
+| [Lionsgate Limited](https://www.lionsgatelimited.com) | The whole shop, about 70 of whose products are 4K steelbooks | `lionsgate` |
+| [MVD Shop](https://mvdshop.com/collections/steelbooks) | Its "SteelBooks" collection, a handful of titles | `mvd` |
+
+Each is one request per check. The first read of a shop is quiet: everything it already sells is recorded and nothing is sent. After that:
+
+- A product that wasn't there before and can be ordered is a **new** alert.
+- A product that couldn't be ordered and now can is an **available to order** alert. That covers a restock, and a listing that went up before it went on sale. Stock that flickers in and out produces one alert a day per title, not one each time.
+- Alerts are grouped: ten new titles at one shop are one push with the first eight named.
+
+What can be ordered right now is listed under **At the shops** on the web page, newest first, with a count per shop.
+
+Things to know:
+
+- Shop listings are not matched to the cards from Blu-ray.com. The same film can appear in both places, and **Purchased** / **Hide** on a card doesn't stop a shop alert for it.
+- A hot title can sell out between two checks. Lower `SHOP_POLL_MINUTES` (minimum 10) to look more often.
+- Leave a shop out of `SHOPS` to stop watching it, or set `SHOPS=none` to switch the feature off.
+
+### Why these sources
+
+Tested from a home connection in October and November 2026: Walmart serves a captcha, Amazon returns 503, Best Buy no longer sells discs, and HiDefNinja and Trackalacker sit behind Cloudflare. Shout! Factory's and Kino Lorber's own shops, Home Theater Forum and The Digital Bits refuse scripted requests too. Blu-ray.com lists retailer exclusives (Walmart, Target, etc.) as separate editions, so those still show up there.
+
+Nothing reads Walmart's stock. The nearest thing is [HD Report](https://hd-report.com/tag/steelbook/), which tags its steelbook posts (preorders opening, artwork reveals, sell-outs, deals at any store) and publishes them as an RSS feed, about twenty posts a month. The tracker keeps the headline and the link, shows the latest on the web page, and adds new ones to the daily digest. Set `NEWS_ENABLED=false` to leave them out.
 
 Until November 2026 the tracker also read the r/steelbooks RSS feed for drop and restock posts. Reddit ended RSS support on 13 November 2026 with no replacement for feeds like this one, and is ending public API access by March 2027, so that source was removed.
 
@@ -96,6 +127,9 @@ Click **Apply**. Unraid re-creates the container on top of the copied database, 
 | `HEALTH_FAIL_THRESHOLD` | `3` | Consecutive failures before a "source failing" alert. |
 | `FAILURE_BACKOFF_SECONDS` | `60` | Pause after a failed product page before reconnecting (doubles on the next failure). |
 | `BACKLOG_RETRY_MINUTES` | `20` | When listings are still unchecked after a scan, run the next scan this soon (doubling while follow-ups make no progress). |
+| `SHOPS` | `gruv,lionsgate,mvd` | Which [shops](#the-shops) to watch. `none` watches no shop. |
+| `SHOP_POLL_MINUTES` | `60` | Minutes between reads of the shops (minimum 10). |
+| `NEWS_ENABLED` | `true` | Read HD Report's steelbook headlines for the digest and the web page. |
 | `RUN_ON_START` | `true` | Scan a few seconds after the container starts. |
 | `DATA_DIR` | `/data` | Where the database is kept. |
 
@@ -104,13 +138,13 @@ Data lives in `/data/tracker.db` (SQLite). Back it up by copying the file. It ha
 ## API
 
 - `GET /api/releases?view=upcoming|preorder|purchased|hidden|all` – JSON list.
-- `GET /api/summary` – counts, the next release, whether a scan is running, how many sources are failing, and `data_persistent` (`false` when the database would not survive a container update); handy for a Home Assistant REST sensor.
+- `GET /api/summary` – counts, the next release, whether a scan is running, when the shops were last read, how many sources are failing, and `data_persistent` (`false` when the database would not survive a container update); handy for a Home Assistant REST sensor.
 - `POST /api/releases/{id}/purchased` or `/hidden` with `{"value": true}`.
-- `POST /api/scan` – start a scan now. `POST /api/digest` – send the digest now.
+- `POST /api/scan` – start a scan now (Blu-ray.com and the shops). `POST /api/digest` – send the digest now.
 
 ## Home Assistant
 
-`homeassistant/automation.yaml` is a reference copy of the automation that turns webhook calls into phone notifications. Preorder and restock alerts use their own Android notification channel ("Steelbook preorders") so you can give them a louder sound in the Companion app. Each webhook call carries a `type`: `preorder`, `restock`, `digest`, `health` or `setup`.
+`homeassistant/automation.yaml` is a reference copy of the automation that turns webhook calls into phone notifications. Preorder and restock alerts use their own Android notification channel ("Steelbook preorders") so you can give them a louder sound in the Companion app. Each webhook call carries a `type`: `preorder`, `restock`, `digest`, `health` or `setup`. Alerts from the shops use `preorder` (a new listing) and `restock` too, so they arrive on the same channel, and carry the shop's name in `store`.
 
 ## Development
 

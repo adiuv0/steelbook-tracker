@@ -38,6 +38,37 @@ CREATE INDEX IF NOT EXISTS idx_releases_date ON releases(release_date);
 -- Databases created before November 2026 also hold a `community` table of
 -- r/steelbooks posts. Nothing reads it any more.
 
+-- 4K steelbooks listed by the shops in app/shops.py, one row per shop product.
+CREATE TABLE IF NOT EXISTS shop_items (
+    shop       TEXT NOT NULL,               -- key from app/shops.py, e.g. 'gruv'
+    id         INTEGER NOT NULL,            -- the shop's own product id
+    title      TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    studio     TEXT,
+    price      TEXT,
+    image      TEXT,
+    available  INTEGER NOT NULL DEFAULT 0,  -- the shop says it can be ordered
+    preorder   INTEGER NOT NULL DEFAULT 0,  -- ...and marks it as a pre-order
+    listed     INTEGER NOT NULL DEFAULT 1,  -- still in the shop's list at the last read
+    published  TEXT,                        -- when the shop put the product up
+    since      TEXT NOT NULL,               -- when it last became (un)available, as far as we saw
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    alert      TEXT,                        -- 'new' or 'restock' while an alert waits to be sent
+    alerted_at TEXT,
+    PRIMARY KEY (shop, id)
+);
+
+-- Headlines from the news feed in app/news.py, waiting for (or sent in) the daily digest.
+CREATE TABLE IF NOT EXISTS headlines (
+    id          TEXT PRIMARY KEY,           -- the feed's own id for the post
+    title       TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    published   TEXT,
+    first_seen  TEXT NOT NULL,
+    digest_sent INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS source_health (
     name       TEXT PRIMARY KEY,
     last_ok    TEXT,
@@ -287,6 +318,122 @@ class DB:
                 {"today": today},
             ).fetchone()
             return {k: (row[k] or 0) for k in row.keys()}
+
+    # --- shops ------------------------------------------------------------
+    def apply_shop_items(self, shop: str, items: list[dict], *, quiet: bool,
+                         realert_before: str) -> None:
+        """Store one read of a shop's list and work out what deserves an alert.
+
+        - A product seen for the first time that can be ordered: 'new'.
+        - A known product that could not be ordered and now can: 'restock', unless
+          it already had an alert after ``realert_before`` (stock that flickers in
+          and out must not ping the phone each time).
+        - A product that can no longer be ordered loses any alert still waiting.
+
+        ``quiet`` is for the first read of a shop: everything it already sells is
+        recorded without an alert. Products missing from the list are only marked
+        as no longer listed, so a list that comes back cut short cannot make
+        everything look sold out and then restocked.
+        """
+        now = now_iso()
+        with self.conn() as c:
+            known = {r["id"]: r for r in c.execute(
+                "SELECT id, available, alert, alerted_at FROM shop_items WHERE shop=?", (shop,))}
+            c.execute("UPDATE shop_items SET listed=0 WHERE shop=?", (shop,))  # set again per item below
+            for item in items:
+                row = {**item, "shop": shop, "now": now, "available": int(item["available"]),
+                       "preorder": int(item["preorder"])}
+                old = known.get(item["id"])
+                if old is None:
+                    c.execute(
+                        """INSERT OR IGNORE INTO shop_items
+                           (shop, id, title, url, studio, price, image, available, preorder,
+                            published, since, first_seen, last_seen, alert)
+                           VALUES (:shop, :id, :title, :url, :studio, :price, :image, :available,
+                                   :preorder, :published, :since, :now, :now, :alert)""",
+                        {**row, "since": (item["published"] or now) if quiet else now,
+                         "alert": "new" if item["available"] and not quiet else None},
+                    )
+                    continue
+                alert, changed = old["alert"], bool(old["available"]) != bool(item["available"])
+                if changed and item["available"]:
+                    if alert is None and not (old["alerted_at"] and old["alerted_at"] >= realert_before):
+                        alert = "restock"
+                elif changed:
+                    alert = None
+                c.execute(
+                    """UPDATE shop_items SET title=:title, url=:url, studio=:studio, price=:price,
+                       image=COALESCE(:image, image), available=:available, preorder=:preorder,
+                       published=COALESCE(:published, published), listed=1, last_seen=:now,
+                       since=CASE WHEN :changed THEN :now ELSE since END, alert=:alert
+                       WHERE shop=:shop AND id=:id""",
+                    {**row, "changed": int(changed), "alert": alert},
+                )
+
+    def pending_shop_alerts(self, shops: Iterable[str]) -> list[sqlite3.Row]:
+        shops = list(shops)
+        if not shops:
+            return []
+        with self.conn() as c:
+            return c.execute(
+                f"""SELECT * FROM shop_items WHERE alert IS NOT NULL
+                    AND shop IN ({','.join('?' * len(shops))}) ORDER BY shop, alert, title""",
+                shops,
+            ).fetchall()
+
+    def mark_shop_alerted(self, shop: str, ids: list[int]) -> None:
+        with self.conn() as c:
+            c.executemany(
+                "UPDATE shop_items SET alert=NULL, alerted_at=? WHERE shop=? AND id=?",
+                [(now_iso(), shop, i) for i in ids],
+            )
+
+    def shop_in_stock(self, shops: Iterable[str], limit: int = 12) -> list[sqlite3.Row]:
+        """What can be ordered at the shops, most recently listed or restocked first."""
+        shops = list(shops)
+        if not shops:
+            return []
+        with self.conn() as c:
+            return c.execute(
+                f"""SELECT * FROM shop_items WHERE listed=1 AND available=1
+                    AND shop IN ({','.join('?' * len(shops))})
+                    ORDER BY since DESC, title LIMIT ?""",
+                [*shops, limit],
+            ).fetchall()
+
+    def shop_counts(self) -> dict[str, dict]:
+        """Per shop: how many 4K steelbooks it lists and how many of them can be ordered."""
+        with self.conn() as c:
+            return {r["shop"]: {"listed": r["listed"], "available": r["available"] or 0}
+                    for r in c.execute(
+                        """SELECT shop, COUNT(*) AS listed, SUM(available) AS available
+                           FROM shop_items WHERE listed=1 GROUP BY shop""")}
+
+    # --- headlines --------------------------------------------------------
+    def insert_headline(self, post: dict, *, digest_sent: bool) -> bool:
+        with self.conn() as c:
+            cur = c.execute(
+                """INSERT OR IGNORE INTO headlines(id, title, url, published, first_seen, digest_sent)
+                   VALUES (:id, :title, :url, :published, :first_seen, :digest_sent)""",
+                {**post, "first_seen": now_iso(), "digest_sent": int(digest_sent)},
+            )
+            return cur.rowcount > 0
+
+    def pending_headlines(self) -> list[sqlite3.Row]:
+        with self.conn() as c:
+            return c.execute(
+                "SELECT * FROM headlines WHERE digest_sent=0 ORDER BY COALESCE(published, first_seen) DESC"
+            ).fetchall()
+
+    def mark_headlines_sent(self, ids: list[str]) -> None:
+        with self.conn() as c:
+            c.executemany("UPDATE headlines SET digest_sent=1 WHERE id=?", [(i,) for i in ids])
+
+    def recent_headlines(self, limit: int = 8) -> list[sqlite3.Row]:
+        with self.conn() as c:
+            return c.execute(
+                "SELECT * FROM headlines ORDER BY COALESCE(published, first_seen) DESC LIMIT ?", (limit,)
+            ).fetchall()
 
     # --- source health ----------------------------------------------------
     def record_ok(self, name: str) -> bool:

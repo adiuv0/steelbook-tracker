@@ -43,8 +43,9 @@ OTHER_MOMMY_ONLY = '<html><body><table><tr><td width="3%"></td><td width="52%">'
 @pytest.fixture
 def tracker(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    # The shops and the news feed have their own tests (test_shops.py, test_news.py).
     s = replace(config.load(), ha_webhook_url=HA, request_delay_min=0, request_delay_max=0,
-                seed_pages=1, scan_pages=1, failure_backoff_seconds=0)
+                seed_pages=1, scan_pages=1, failure_backoff_seconds=0, shops=(), news_enabled=False)
     return Tracker(s, DB(s.db_path))
 
 
@@ -643,8 +644,9 @@ def test_database_from_before_restock_alerts_starts_watching_what_is_unavailable
 
 
 async def test_scan_reads_only_blu_ray_and_home_assistant(tracker):
-    """Reddit ended its RSS feeds in November 2026, so r/steelbooks is no longer read.
-    A request to it would fail on every scan."""
+    """Reddit ended its RSS feeds in November 2026, so r/steelbooks is no longer read:
+    a request to it would fail on every scan. And with the shops and the news feed
+    switched off, as they are for these tests, a scan asks nobody else."""
     with respx.mock(assert_all_called=False) as router:  # a request to anything else raises
         mock_sites(router, read("product_announced.html"))
         result = await tracker.run_scan()
