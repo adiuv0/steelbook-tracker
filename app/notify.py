@@ -41,13 +41,64 @@ def restock_payload(row) -> dict:
     }
 
 
-def digest_payload(releases, app_url: str | None = None) -> dict:
+# A push notification is no place for a long list; the rest is on the page or at the shop.
+MAX_SHOP_LINES = 8
+MAX_HEADLINES = 8
+
+
+def shop_payload(shop, kind: str, rows) -> dict:
+    """Everything of one kind that changed at one shop since the last look, as one alert.
+
+    ``kind`` is 'new' (a listing not seen before that can be ordered) or 'restock'
+    (one that could not be ordered and now can). They are sent as the ``preorder``
+    and ``restock`` types so Home Assistant treats them like the Blu-ray.com alerts.
+    """
+    n = len(rows)
+    if kind == "new":
+        title = f"New 4K steelbook at {shop.name}" if n == 1 else f"{n} new 4K steelbooks at {shop.name}"
+    else:
+        title = (f"Available to order at {shop.name}" if n == 1
+                 else f"{n} steelbooks available to order at {shop.name}")
+
+    def line(row) -> str:
+        studio = f" · {row['studio']}" if row["studio"] else ""
+        price = f" · {row['price']}" if row["price"] else ""
+        return f"{row['title']}{studio}{price}{' · pre-order' if row['preorder'] else ''}"
+
+    if n == 1:
+        message = line(rows[0])
+    else:
+        lines = [f"• {line(r)}" for r in rows[:MAX_SHOP_LINES]]
+        if n > MAX_SHOP_LINES:
+            lines.append(f"and {n - MAX_SHOP_LINES} more")
+        message = "\n".join(lines)
+    return {
+        "type": "preorder" if kind == "new" else "restock",
+        "title": title,
+        "message": message,
+        "url": rows[0]["url"] if n == 1 else shop.page_url,
+        "image": rows[0]["image"] if n == 1 else None,
+        "id": f"{shop.key}-{rows[0]['id']}",
+        "store": shop.name,
+    }
+
+
+def digest_payload(releases, headlines=(), app_url: str | None = None) -> dict:
     lines = []
     for r in releases:
         lines.append(f"• {r['title']}{_edition(r)} ({r['release_date'] or 'TBA'}){_store(r)}")
     n = len(releases)
+    if headlines:
+        if lines:
+            lines.append("")
+            lines.append("In the news:")
+        lines.extend(f"• {h['title']}" for h in headlines[:MAX_HEADLINES])
+        if len(headlines) > MAX_HEADLINES:
+            lines.append(f"and {len(headlines) - MAX_HEADLINES} more headlines on the tracker page")
     if n:
         title = f"{n} new steelbook{'s' if n != 1 else ''} announced"
+    elif headlines:
+        title = "Steelbook news"
     else:  # only when a digest is asked for by hand
         title = "Steelbook digest"
         lines.append("Nothing new since the last digest.")

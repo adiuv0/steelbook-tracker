@@ -1,9 +1,14 @@
+import json
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
+from app import shops
+
+FIX = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
@@ -107,3 +112,59 @@ def test_page_lists_sources_and_no_reddit_posts(client):
     page = client.get("/").text
     assert "<h2>Sources</h2>" in page
     assert "r/steelbooks" not in page
+
+
+def test_page_shows_what_can_be_ordered_at_the_shops(client):
+    gruv = next(s for s in shops.SHOPS if s.key == "gruv")
+    feed = json.loads((FIX / "shop_gruv.json").read_text(encoding="utf-8"))
+    main.db.apply_shop_items("gruv", shops.parse_products(gruv, feed["products"]), quiet=True, realert_before="")
+
+    page = client.get("/").text
+    panel = page.split("<h2>At the shops</h2>")[1].split("<h2>")[0]
+    assert ('<a href="https://www.gruv.com/products/prisoners-of-the-ghostland-4k-ultra-hd-steelbook-uhd-_1000866575"'
+            ' target="_blank" rel="noopener">Prisoners Of The Ghostland (4K Ultra HD Steelbook)</a>') in panel
+    assert "Gruv · AMC · $27.57 · In stock" in panel
+    assert "Gruv · Shout! Factory · $39.99 · In stock" in panel
+    assert "House of the Dragon" not in panel  # sold out
+    assert '<a href="https://www.gruv.com/collections/4k-steelbooks" target="_blank" rel="noopener">Gruv</a>: 2 of 3 can be ordered' in panel
+    # The other shops are named even before their first read.
+    assert ">Lionsgate Limited</a>" in panel and ">MVD Shop</a>" in panel
+
+
+def test_page_shows_the_latest_headlines(client):
+    main.db.insert_headline({"id": "p1", "title": "The Odyssey 4k SteelBooks Are Sold Out", "published": None,
+                             "url": "https://hd-report.com/2026/11/12/the-odyssey/"}, digest_sent=True)
+    panel = client.get("/").text.split("<h2>Steelbook news</h2>")[1].split("</section>")[0]
+    assert '<a href="https://hd-report.com/2026/11/12/the-odyssey/" target="_blank" rel="noopener">' \
+           'The Odyssey 4k SteelBooks Are Sold Out</a>' in panel
+    assert "HD Report" in panel
+
+
+def test_exclusive_at_a_watched_shop_says_its_alerts_come_from_the_shop(client):
+    add(9020, "Jackie Brown 4K", "2026-12-15", is_steelbook=1, exclusive="Lionsgate Limited")
+    add(9021, "Clayface 4K", "2026-12-15", is_steelbook=1, exclusive="Target")
+
+    page = client.get("/").text
+    watched = card(page, "Jackie Brown 4K")
+    assert "Sold only at Lionsgate Limited." in watched and "alerts you from there" in watched
+    assert "can't alert you" not in watched
+    assert "can't alert you" in card(page, "Clayface 4K")
+
+
+async def test_scan_now_also_reads_the_shops(monkeypatch):
+    calls = []
+
+    async def scan():
+        calls.append("scan")
+
+    async def read_shops():
+        calls.append("shops")
+
+    monkeypatch.setattr(main.tracker, "run_scan", scan)
+    monkeypatch.setattr(main.tracker, "run_shops", read_shops)
+    await main._scan_everything()
+    assert sorted(calls) == ["scan", "shops"]
+
+
+def test_summary_says_when_the_shops_were_last_read(client):
+    assert client.get("/api/summary").json()["last_shop_run"] is None

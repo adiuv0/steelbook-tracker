@@ -1,0 +1,366 @@
+{
+ "products": [
+  {
+   "id": 15598760525935,
+   "title": "Raw Deal 4K 40th Anniversary SteelBook®",
+   "handle": "raw-deal-4k-40th-anniversary-steelbook",
+   "body_html": "<p>Trimmed for the test.</p>",
+   "published_at": "2026-11-10T08:58:54-08:00",
+   "created_at": "2026-11-10T08:58:54-08:00",
+   "updated_at": "2026-11-20T10:34:26-08:00",
+   "vendor": "LionsgateLimited",
+   "product_type": "",
+   "tags": [
+    "collectible movie",
+    "live",
+    "status::pre-order",
+    "steelbook"
+   ],
+   "variants": [
+    {
+     "id": 46796281577806,
+     "title": "Default Title",
+     "option1": "Default Title",
+     "option2": null,
+     "option3": null,
+     "sku": "A525935",
+     "requires_shipping": true,
+     "taxable": true,
+     "featured_image": null,
+     "available": true,
+     "price": "34.99",
+     "grams": 118,
+     "compare_at_price": null,
+     "position": 1,
+     "product_id": 15598760525935,
+     "created_at": "2026-11-10T08:58:54-08:00",
+     "updated_at": "2026-11-20T10:34:26-08:00"
+    }
+   ],
+   "images": [
+    {
+     "id": 77993802629677,
+     "created_at": "2026-11-10T08:58:54-08:00",
+     "position": 1,
+     "updated_at": "2026-11-10T08:58:54-08:00",
+     "product_id": 15598760525935,
+     "variant_ids": [],
+     "src": "https://cdn.shopify.com/s/files/1/0001/0002/0003/files/raw-deal-4k-40th-anniver.jpg?v=1763400000",
+     "width": 1200,
+     "height": 1500
+    }
+   ],
+   "options": [
+    {
+     "name": "Title",
+     "position": 1,
+     "values": [
+      "Default Title"
+     ]
+    }
+   ]
+  },
+  {
+   "id": 15590000000011,
+   "title": "The Cabin in the Woods 4K SteelBook®",
+   "handle": "the-cabin-in-the-woods-4k-steelbook",
+   "body_html": "<p>Trimmed for the test.</p>",
+   "published_at": "2026-11-09T09:00:00-08:00",
+   "created_at": "2026-11-09T09:00:00-08:00",
+   "updated_at": "2026-11-20T10:34:26-08:00",
+   "vendor": "LionsgateLimited",
+   "product_type": "",
+   "tags": [
+    "collectible movie",
+    "live",
+    "status::Sold-Out",
+    "steelbook",
+    "warehouse finds"
+   ],
+   "variants": [
+    {
+     "id": 46770000000034,
+     "title": "Default Title",
+     "option1": "Default Title",
+     "option2": null,
+     "option3": null,
+     "sku": "A000011",
+     "requires_shipping": true,
+     "taxable": true,
+     "featured_image": null,
+     "available": false,
+     "price": "24.99",
+     "grams": 118,
+     "compare_at_price": null,
+     "position": 1,
+     "product_id": 15590000000011,
+     "created_at": "2026-11-09T09:00:00-08:00",
+     "updated_at": "2026-11-20T10:34:26-08:00"
+    }
+   ],
+   "images": [
+    {
+     "id": 77950000000057,
+     "created_at": "2026-11-09T09:00:00-08:00",
+     "position": 1,
+     "updated_at": "2026-11-09T09:00:00-08:00",
+     "product_id": 15590000000011,
+     "variant_ids": [],
+     "src": "https://cdn.shopify.com/s/files/1/0001/0002/0003/files/the-cabin-in-the-woods-4.jpg?v=1763400000",
+     "width": 1200,
+     "height": 1500
+    }
+   ],
+   "options": [
+    {
+     "name": "Title",
+     "position": 1,
+     "values": [
+      "Default Title"
+     ]
+    }
+   ]
+  },
+  {
+   "id": 15590000000012,
+   "title": "Reservoir Dogs 4K SteelBook® Reprint - Mr. Pink Edition",
+   "handle": "reservoir-dogs-4k-steelbook-reprint-mr-pink-edition",
+   "body_html": "<p>Trimmed for the test.</p>",
+   "published_at": "2026-11-04T09:00:00-08:00",
+   "created_at": "2026-11-04T09:00:00-08:00",
+   "updated_at": "2026-11-20T10:34:26-08:00",
+   "vendor": "Lionsgate Limited",
+   "product_type": "",
+   "tags": [
+    "live",
+    "preorder",
+    "Quentin Tarantino",
+    "reservoir dogs 4K",
+    "status::Sold-Out",
+    "steelbook"
+   ],
+   "variants": [
+    {
+     "id": 46770000000037,
+     "title": "Default Title",
+     "option1": "Default Title",
+     "option2": null,
+     "option3": null,
+     "sku": "A000012",
+     "requires_shipping": true,
+     "taxable": true,
+     "featured_image": null,
+     "available": false,
+     "price": "29.99",
+     "grams": 118,
+     "compare_at_price": null,
+     "position": 1,
+     "product_id": 15590000000012,
+     "created_at": "2026-11-04T09:00:00-08:00",
+     "updated_at": "2026-11-20T10:34:26-08:00"
+    }
+   ],
+   "images": [
+    {
+     "id": 77950000000062,
+     "created_at": "2026-11-04T09:00:00-08:00",
+     "position": 1,
+     "updated_at": "2026-11-04T09:00:00-08:00",
+     "product_id": 15590000000012,
+     "variant_ids": [],
+     "src": "https://cdn.shopify.com/s/files/1/0001/0002/0003/files/reservoir-dogs-4k-steelb.jpg?v=1763400000",
+     "width": 1200,
+     "height": 1500
+    }
+   ],
+   "options": [
+    {
+     "name": "Title",
+     "position": 1,
+     "values": [
+      "Default Title"
+     ]
+    }
+   ]
+  },
+  {
+   "id": 15590000000013,
+   "title": "House of 1000 Corpses Blu-ray SteelBook®",
+   "handle": "house-of-1000-corpses-blu-ray-steelbook",
+   "body_html": "<p>Trimmed for the test.</p>",
+   "published_at": "2025-10-28T09:00:00-07:00",
+   "created_at": "2025-10-28T09:00:00-07:00",
+   "updated_at": "2026-11-20T10:34:26-08:00",
+   "vendor": "LionsgateLimited",
+   "product_type": "",
+   "tags": [
+    "collectible movie",
+    "live",
+    "steelbook",
+    "warehouse finds"
+   ],
+   "variants": [
+    {
+     "id": 46770000000040,
+     "title": "Default Title",
+     "option1": "Default Title",
+     "option2": null,
+     "option3": null,
+     "sku": "A000013",
+     "requires_shipping": true,
+     "taxable": true,
+     "featured_image": null,
+     "available": true,
+     "price": "24.99",
+     "grams": 118,
+     "compare_at_price": null,
+     "position": 1,
+     "product_id": 15590000000013,
+     "created_at": "2025-10-28T09:00:00-07:00",
+     "updated_at": "2026-11-20T10:34:26-08:00"
+    }
+   ],
+   "images": [
+    {
+     "id": 77950000000067,
+     "created_at": "2025-10-28T09:00:00-07:00",
+     "position": 1,
+     "updated_at": "2025-10-28T09:00:00-07:00",
+     "product_id": 15590000000013,
+     "variant_ids": [],
+     "src": "https://cdn.shopify.com/s/files/1/0001/0002/0003/files/house-of-1000-corpses-bl.jpg?v=1763400000",
+     "width": 1200,
+     "height": 1500
+    }
+   ],
+   "options": [
+    {
+     "name": "Title",
+     "position": 1,
+     "values": [
+      "Default Title"
+     ]
+    }
+   ]
+  },
+  {
+   "id": 15590000000014,
+   "title": "American Psycho 25th Anniversary 4K Collector's Edition",
+   "handle": "american-psycho-25th-anniversary-4k-collectors-edition",
+   "body_html": "<p>Trimmed for the test.</p>",
+   "published_at": "2025-09-02T09:00:00-07:00",
+   "created_at": "2025-09-02T09:00:00-07:00",
+   "updated_at": "2026-11-20T10:34:26-08:00",
+   "vendor": "LionsgateLimited",
+   "product_type": "",
+   "tags": [
+    "collectible movie",
+    "live"
+   ],
+   "variants": [
+    {
+     "id": 46770000000043,
+     "title": "Default Title",
+     "option1": "Default Title",
+     "option2": null,
+     "option3": null,
+     "sku": "A000014",
+     "requires_shipping": true,
+     "taxable": true,
+     "featured_image": null,
+     "available": true,
+     "price": "49.99",
+     "grams": 118,
+     "compare_at_price": null,
+     "position": 1,
+     "product_id": 15590000000014,
+     "created_at": "2025-09-02T09:00:00-07:00",
+     "updated_at": "2026-11-20T10:34:26-08:00"
+    }
+   ],
+   "images": [
+    {
+     "id": 77950000000072,
+     "created_at": "2025-09-02T09:00:00-07:00",
+     "position": 1,
+     "updated_at": "2025-09-02T09:00:00-07:00",
+     "product_id": 15590000000014,
+     "variant_ids": [],
+     "src": "https://cdn.shopify.com/s/files/1/0001/0002/0003/files/american-psycho-25th-ann.jpg?v=1763400000",
+     "width": 1200,
+     "height": 1500
+    }
+   ],
+   "options": [
+    {
+     "name": "Title",
+     "position": 1,
+     "values": [
+      "Default Title"
+     ]
+    }
+   ]
+  },
+  {
+   "id": 15590000000015,
+   "title": "The Conversation 50th Anniversary Collectors Edition 4K SteelBook®",
+   "handle": "the-conversation-50th-anniversary-collectors-edition-4k-steelbook",
+   "body_html": "<p>Trimmed for the test.</p>",
+   "published_at": "2025-06-02T09:00:00-07:00",
+   "created_at": "2025-06-02T09:00:00-07:00",
+   "updated_at": "2026-11-20T10:34:26-08:00",
+   "vendor": "Lionsgate Limited",
+   "product_type": "",
+   "tags": [
+    "4K",
+    "collectible movie",
+    "digital release",
+    "film",
+    "Francis Ford Coppola"
+   ],
+   "variants": [
+    {
+     "id": 46770000000046,
+     "title": "Default Title",
+     "option1": "Default Title",
+     "option2": null,
+     "option3": null,
+     "sku": "A000015",
+     "requires_shipping": true,
+     "taxable": true,
+     "featured_image": null,
+     "available": true,
+     "price": "79.99",
+     "grams": 118,
+     "compare_at_price": null,
+     "position": 1,
+     "product_id": 15590000000015,
+     "created_at": "2025-06-02T09:00:00-07:00",
+     "updated_at": "2026-11-20T10:34:26-08:00"
+    }
+   ],
+   "images": [
+    {
+     "id": 77950000000077,
+     "created_at": "2025-06-02T09:00:00-07:00",
+     "position": 1,
+     "updated_at": "2025-06-02T09:00:00-07:00",
+     "product_id": 15590000000015,
+     "variant_ids": [],
+     "src": "https://cdn.shopify.com/s/files/1/0001/0002/0003/files/the-conversation-50th-an.jpg?v=1763400000",
+     "width": 1200,
+     "height": 1500
+    }
+   ],
+   "options": [
+    {
+     "name": "Title",
+     "position": 1,
+     "values": [
+      "Default Title"
+     ]
+    }
+   ]
+  }
+ ]
+}

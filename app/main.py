@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import random
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -12,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import config, storage
+from . import config, news, storage
 from .db import DB
 from .jobs import Tracker
 
@@ -60,6 +61,18 @@ async def scan_loop():
         await tracker.run_scan()
 
 
+async def shop_loop():
+    """The shops take one quick request each, so they are read more often than Blu-ray.com."""
+    if not tracker.shops:
+        return
+    if settings.run_on_start:
+        await asyncio.sleep(2)
+        await tracker.run_shops()
+    while True:
+        await asyncio.sleep(settings.shop_poll_minutes * 60 + random.uniform(-60, 60))
+        await tracker.run_shops()
+
+
 async def digest_loop():
     while True:
         await asyncio.sleep(_seconds_until(settings.digest_time))
@@ -72,7 +85,7 @@ async def digest_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    tasks = [asyncio.create_task(scan_loop()), asyncio.create_task(digest_loop())]
+    tasks = [asyncio.create_task(loop()) for loop in (scan_loop, shop_loop, digest_loop)]
     yield
     for t in tasks:
         t.cancel()
@@ -109,6 +122,14 @@ async def index(request: Request, view: str = "upcoming"):
             "notifications_configured": bool(settings.ha_webhook_url),
             "data_persistent": data_storage.persistent,
             "data_dir": str(settings.data_dir),
+            "shops": tracker.shops,
+            "shop_counts": db.shop_counts(),
+            "shop_items": db.shop_in_stock(shop.key for shop in tracker.shops),
+            "shop_names": {shop.key: shop.name for shop in tracker.shops},
+            "shop_poll_minutes": settings.shop_poll_minutes,
+            "last_shop_run": tracker.last_shop_run,
+            "news": {"name": news.NAME, "url": news.SITE_URL} if settings.news_enabled else None,
+            "headlines": db.recent_headlines() if settings.news_enabled else [],
         },
     )
 
@@ -144,6 +165,7 @@ async def api_summary():
         "next_title": next_up["title"] if next_up else None,
         "next_date": next_up["release_date"] if next_up else None,
         "last_run": tracker.last_run,
+        "last_shop_run": tracker.last_shop_run,
         "scanning": tracker.lock.locked(),
         "sources_failing": sum(1 for h in db.health() if h["fail_count"] > 0),
         "notifications_configured": bool(settings.ha_webhook_url),
@@ -152,11 +174,15 @@ async def api_summary():
     }
 
 
+async def _scan_everything() -> None:
+    await asyncio.gather(tracker.run_scan(), tracker.run_shops())
+
+
 @app.post("/api/scan")
 async def api_scan():
     if tracker.lock.locked():
         return JSONResponse({"status": "already running"}, status_code=409)
-    task = asyncio.create_task(tracker.run_scan())
+    task = asyncio.create_task(_scan_everything())
     background.add(task)
     task.add_done_callback(background.discard)
     return {"status": "started"}

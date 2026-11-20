@@ -57,6 +57,7 @@
   ul { margin: 0; padding-left: 18px; }
   li { margin: 3px 0; font-size: 14px; }
   li a { color: var(--text); }
+  .meta a { color: var(--accent); }
   .ok { color: var(--ok); } .bad { color: var(--bad); }
   .alert-wrap { max-width: 1200px; margin: 0 auto; padding: 8px 16px 0; }
   .alert { padding: 10px 14px; border-radius: 12px; border: 1px solid var(--bad);
@@ -92,6 +93,7 @@
   <button id="scan" data-last-run="{{ last_run or '' }}" {{ 'disabled' if scanning }}>{{ 'Scanning…' if scanning else 'Scan now' }}</button>
 </nav>
 <main>
+  {% set watched_shops = shop_names.values()|map('lower')|list %}
   {% if releases %}
   <div class="grid">
     {% for r in releases %}
@@ -113,9 +115,13 @@
           {% elif r.availability and not released and not r.preorder %}<span class="badge">{{ r.availability }}</span>{% endif %}
           {% if r.price %}<span class="badge">{{ r.price }}</span>{% endif %}
         </div>
-        {# The only stock Blu-ray.com reports is Amazon's. #}
+        {# The only stock Blu-ray.com reports is Amazon's. A few shops publish their own. #}
         {% if r.exclusive and r.exclusive != 'Amazon' and not r.availability and not released %}
+        {% if r.exclusive|lower in watched_shops %}
+        <div class="meta">Sold only at {{ r.exclusive }}. The tracker reads that shop's own listings and alerts you from there (see At the shops, below).</div>
+        {% else %}
         <div class="meta">Sold only at {{ r.exclusive }}, whose stock the tracker can't see, so it can't alert you when this goes on sale.</div>
+        {% endif %}
         {% endif %}
         <div class="actions">
           <button data-flag="purchased" data-value="{{ 0 if r.purchased else 1 }}" class="{{ 'on' if r.purchased }}">
@@ -145,6 +151,36 @@
       {% if last_result %}<div class="meta" style="margin-top:8px">{{ last_result }}</div>{% endif %}
       {% if not notifications_configured %}<div class="bad" style="margin-top:8px">Notifications are off: HA_WEBHOOK_URL is not set.</div>{% endif %}
     </div>
+    {% if shops %}
+    <div>
+      <h2>At the shops</h2>
+      {% if shop_items %}
+      <ul>
+      {% for i in shop_items %}
+        <li><a href="{{ i.url }}" target="_blank" rel="noopener">{{ i.title }}</a>
+          <div class="meta">{{ shop_names[i.shop] }}{% if i.studio %} · {{ i.studio }}{% endif %}{% if i.price %} · {{ i.price }}{% endif %} · {{ 'Pre-order' if i.preorder else 'In stock' }}</div>
+        </li>
+      {% endfor %}
+      </ul>
+      {% elif shop_counts %}<div class="meta">Nothing can be ordered at the shops right now.</div>
+      {% else %}<div class="meta">The shops haven't been read yet.</div>{% endif %}
+      <div class="meta" style="margin-top:8px">
+        Newest listings and restocks of 4K steelbooks, read from each shop every {{ shop_poll_minutes }} minutes.
+        {% for shop in shops %}{% set n = shop_counts.get(shop.key) %}
+        <a href="{{ shop.page_url }}" target="_blank" rel="noopener">{{ shop.name }}</a>{% if n %}: {{ n.available }} of {{ n.listed }} can be ordered{% endif %}{{ '.' if loop.last else ' ·' }}
+        {% endfor %}
+        {% if last_shop_run %}Last read <time datetime="{{ last_shop_run }}">{{ last_shop_run[:16].replace('T', ' ') }} UTC</time>.{% endif %}
+      </div>
+    </div>
+    {% endif %}
+    {% if news %}
+    <div>
+      <h2>Steelbook news</h2>
+      {% if headlines %}<ul>{% for h in headlines %}<li><a href="{{ h.url }}" target="_blank" rel="noopener">{{ h.title }}</a></li>{% endfor %}</ul>
+      {% else %}<div class="meta">No headlines read yet.</div>{% endif %}
+      <div class="meta" style="margin-top:8px">Headlines from <a href="{{ news.url }}" target="_blank" rel="noopener">{{ news.name }}</a>. New ones are added to the daily digest.</div>
+    </div>
+    {% endif %}
   </section>
 </main>
 <script>

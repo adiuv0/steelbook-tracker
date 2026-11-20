@@ -4,8 +4,9 @@ import asyncio
 import logging
 import random
 from datetime import date, datetime, timedelta, timezone
+from itertools import groupby
 
-from . import notify
+from . import news, notify, shops
 from .bluray import BluRayClient, SessionError, is_upcoming
 from .config import Settings
 from .db import DB
@@ -15,7 +16,9 @@ log = logging.getLogger(__name__)
 SOURCE_SEARCH = "Blu-ray.com search"
 SOURCE_PRODUCT = "Blu-ray.com product pages"
 SOURCE_HA = "Home Assistant webhook"
-SOURCES = (SOURCE_SEARCH, SOURCE_PRODUCT, SOURCE_HA)
+SOURCE_NEWS = f"{news.NAME} headlines"
+# A shop's stock can flicker in and out; one "available again" alert a day per title is enough.
+SHOP_REALERT_HOURS = 24
 
 
 def describe(error: Exception) -> str:
@@ -31,9 +34,16 @@ class Tracker:
         self.last_run: str | None = None
         self.last_result: str | None = None
         self.stalled = 0  # scans in a row that left the backlog no smaller
-        # A source that was dropped while it was failing (r/steelbooks, when Reddit
-        # ended its RSS feeds) would otherwise stay listed as failing for good.
-        self.db.forget_sources_except(SOURCES)
+        self.shops = shops.enabled(settings.shops)
+        self.shop_lock = asyncio.Lock()
+        self.last_shop_run: str | None = None
+        self.last_shop_result: str | None = None
+        self.sources = (SOURCE_SEARCH, SOURCE_PRODUCT, SOURCE_HA,
+                        *(shop.name for shop in self.shops),
+                        *((SOURCE_NEWS,) if settings.news_enabled else ()))
+        # A source that was dropped or switched off while it was failing (r/steelbooks,
+        # when Reddit ended its RSS feeds) would otherwise stay listed as failing for good.
+        self.db.forget_sources_except(self.sources)
 
     # --- public entry points ----------------------------------------------
     async def run_scan(self) -> str:
@@ -51,14 +61,38 @@ class Tracker:
             log.info(result)
             return result
 
+    async def run_shops(self) -> str:
+        """Read the shops' own listings and send their alerts.
+
+        One quick request per shop, so this runs on its own, shorter timer
+        (SHOP_POLL_MINUTES) instead of waiting for the slow Blu-ray.com scan.
+        """
+        if not self.shops:
+            return "No shops are being watched."
+        if self.shop_lock.locked():
+            return "A shop check is already running."
+        async with self.shop_lock:
+            try:
+                result = await self._check_shops()
+            except Exception as e:  # never let one bad run kill the scheduler
+                log.exception("shop check failed")
+                result = f"Shop check failed: {describe(e)}"
+            self.last_shop_run = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            self.last_shop_result = result
+            log.info(result)
+            return result
+
     async def send_digest(self, force: bool = False) -> str:
         releases = self.db.pending_digest()
-        if not releases and not force:
+        headlines = self.db.pending_headlines() if self.s.news_enabled else []
+        if not releases and not headlines and not force:
             return "Nothing new for the digest."
-        delivered = await self._notify(notify.digest_payload(releases, self.s.app_url))
+        delivered = await self._notify(notify.digest_payload(releases, headlines, self.s.app_url))
         if delivered:
             self.db.mark_digest_sent([r["id"] for r in releases])
-        return f"Digest: {len(releases)} releases{self._delivery_note(delivered)}."
+            self.db.mark_headlines_sent([h["id"] for h in headlines])
+        news_text = f", {len(headlines)} headline{'s' if len(headlines) != 1 else ''}" if headlines else ""
+        return f"Digest: {len(releases)} releases{news_text}{self._delivery_note(delivered)}."
 
     def has_backlog(self) -> bool:
         """True while the first scan is unfinished or listings still wait for their first check."""
@@ -126,7 +160,11 @@ class Tracker:
         else:
             self.stalled = 0
 
-        # 3. Alerts.
+        # 3. News headlines, for the daily digest.
+        if self.s.news_enabled:
+            await self._read_news()
+
+        # 4. Alerts.
         if seeding:
             if not listed:
                 # Without the listings there is nothing to seed. Finishing here would
@@ -167,6 +205,55 @@ class Tracker:
         restock_text = f", {restocks} restock alerts" if restocks else ""
         return (f"Scan done: {new_count} new listings, {checked} product pages checked, "
                 f"{sent} preorder alerts{restock_text}{note}.")
+
+    async def _read_news(self) -> None:
+        try:
+            posts = await news.fetch()
+        except Exception as e:
+            await self._fail(SOURCE_NEWS, e)
+            return
+        # The first read only records what is already there, so the next digest
+        # doesn't open with a month of old headlines.
+        first = self.db.get_meta("news_seeded") is None
+        for post in posts:
+            self.db.insert_headline(post, digest_sent=first)
+        if first:
+            self.db.set_meta("news_seeded", datetime.now(timezone.utc).isoformat())
+        await self._ok(SOURCE_NEWS)
+
+    async def _check_shops(self) -> str:
+        read = 0
+        realert_before = (datetime.now(timezone.utc)
+                          - timedelta(hours=SHOP_REALERT_HOURS)).isoformat(timespec="seconds")
+        async with shops.client() as http:
+            for shop in self.shops:
+                try:
+                    items = await shops.fetch(http, shop)
+                except Exception as e:
+                    await self._fail(shop.name, e)
+                    continue
+                # A shop's first read only records what it already sells.
+                seeded_key = f"shop_seeded:{shop.key}"
+                first = self.db.get_meta(seeded_key) is None
+                self.db.apply_shop_items(shop.key, items, quiet=first, realert_before=realert_before)
+                if first:
+                    self.db.set_meta(seeded_key, datetime.now(timezone.utc).isoformat())
+                await self._ok(shop.name)
+                read += 1
+
+        by_key = {shop.key: shop for shop in self.shops}
+        sent = 0
+        delivered = True
+        pending = self.db.pending_shop_alerts(by_key)
+        for (key, kind), group in groupby(pending, key=lambda r: (r["shop"], r["alert"])):
+            rows = list(group)
+            delivered = await self._notify(notify.shop_payload(by_key[key], kind, rows))
+            if not delivered:
+                break  # Home Assistant isn't answering; these wait for the next check
+            self.db.mark_shop_alerted(key, [r["id"] for r in rows])
+            sent += 1
+        note = self._delivery_note(delivered) if sent or not delivered else ""
+        return f"Shops: {read} of {len(self.shops)} read, {sent} alert{'s' if sent != 1 else ''}{note}."
 
     async def _check_products(self, br: BluRayClient, rows) -> int:
         """Check product pages, riding out short outages instead of giving up.

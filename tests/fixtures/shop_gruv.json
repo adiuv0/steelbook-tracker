@@ -1,0 +1,182 @@
+{
+ "products": [
+  {
+   "id": 10487712022786,
+   "title": "Prisoners Of The Ghostland (4K Ultra HD Steelbook) [UHD]",
+   "handle": "prisoners-of-the-ghostland-4k-ultra-hd-steelbook-uhd-_1000866575",
+   "body_html": "<p>Trimmed for the test.</p>",
+   "published_at": "2026-11-17T01:45:48-08:00",
+   "created_at": "2026-11-17T01:45:48-08:00",
+   "updated_at": "2026-11-20T10:34:26-08:00",
+   "vendor": "AMC",
+   "product_type": "",
+   "tags": [
+    "Crime /Thriller",
+    "Horror",
+    "Thriller/ Crime",
+    "UHD"
+   ],
+   "variants": [
+    {
+     "id": 31463136068359,
+     "title": "Default Title",
+     "option1": "Default Title",
+     "option2": null,
+     "option3": null,
+     "sku": "A022786",
+     "requires_shipping": true,
+     "taxable": true,
+     "featured_image": null,
+     "available": true,
+     "price": "27.57",
+     "grams": 118,
+     "compare_at_price": "27.57",
+     "position": 1,
+     "product_id": 10487712022786,
+     "created_at": "2026-11-17T01:45:48-08:00",
+     "updated_at": "2026-11-20T10:34:26-08:00"
+    }
+   ],
+   "images": [
+    {
+     "id": 52438560113932,
+     "created_at": "2026-11-17T01:45:48-08:00",
+     "position": 1,
+     "updated_at": "2026-11-17T01:45:48-08:00",
+     "product_id": 10487712022786,
+     "variant_ids": [],
+     "src": "https://cdn.shopify.com/s/files/1/0001/0002/0003/files/prisoners-of-the-ghostla.jpg?v=1763400000",
+     "width": 1200,
+     "height": 1500
+    }
+   ],
+   "options": [
+    {
+     "name": "Title",
+     "position": 1,
+     "values": [
+      "Default Title"
+     ]
+    }
+   ]
+  },
+  {
+   "id": 10480000000001,
+   "title": "House of the Dragon (4K Ultra HD Steelbook) [UHD]",
+   "handle": "house-of-the-dragon-4k-ultra-hd-steelbook-uhd-_1000860001",
+   "body_html": "<p>Trimmed for the test.</p>",
+   "published_at": "2026-11-02T01:10:00-08:00",
+   "created_at": "2026-11-02T01:10:00-08:00",
+   "updated_at": "2026-11-20T10:34:26-08:00",
+   "vendor": "HBO",
+   "product_type": "",
+   "tags": [
+    "Drama",
+    "UHD"
+   ],
+   "variants": [
+    {
+     "id": 31440000000004,
+     "title": "Default Title",
+     "option1": "Default Title",
+     "option2": null,
+     "option3": null,
+     "sku": "A000001",
+     "requires_shipping": true,
+     "taxable": true,
+     "featured_image": null,
+     "available": false,
+     "price": "29.99",
+     "grams": 118,
+     "compare_at_price": null,
+     "position": 1,
+     "product_id": 10480000000001,
+     "created_at": "2026-11-02T01:10:00-08:00",
+     "updated_at": "2026-11-20T10:34:26-08:00"
+    }
+   ],
+   "images": [
+    {
+     "id": 52400000000007,
+     "created_at": "2026-11-02T01:10:00-08:00",
+     "position": 1,
+     "updated_at": "2026-11-02T01:10:00-08:00",
+     "product_id": 10480000000001,
+     "variant_ids": [],
+     "src": "https://cdn.shopify.com/s/files/1/0001/0002/0003/files/house-of-the-dragon-4k-u.jpg?v=1763400000",
+     "width": 1200,
+     "height": 1500
+    }
+   ],
+   "options": [
+    {
+     "name": "Title",
+     "position": 1,
+     "values": [
+      "Default Title"
+     ]
+    }
+   ]
+  },
+  {
+   "id": 10470000000002,
+   "title": "Wildwood (Limited Edition 4K Ultra HD Steelbook + Blu-ray) [UHD]",
+   "handle": "wildwood-limited-edition-4k-ultra-hd-steelbook-blu-ray-uhd-_1000850002",
+   "body_html": "<p>Trimmed for the test.</p>",
+   "published_at": "2026-10-23T02:00:00-07:00",
+   "created_at": "2026-10-23T02:00:00-07:00",
+   "updated_at": "2026-11-20T10:34:26-08:00",
+   "vendor": "Shout! Factory",
+   "product_type": "",
+   "tags": [
+    "Action",
+    "Animated",
+    "Fantasy",
+    "UHD"
+   ],
+   "variants": [
+    {
+     "id": 31410000000007,
+     "title": "Default Title",
+     "option1": "Default Title",
+     "option2": null,
+     "option3": null,
+     "sku": "A000002",
+     "requires_shipping": true,
+     "taxable": true,
+     "featured_image": null,
+     "available": true,
+     "price": "39.99",
+     "grams": 118,
+     "compare_at_price": null,
+     "position": 1,
+     "product_id": 10470000000002,
+     "created_at": "2026-10-23T02:00:00-07:00",
+     "updated_at": "2026-11-20T10:34:26-08:00"
+    }
+   ],
+   "images": [
+    {
+     "id": 52350000000012,
+     "created_at": "2026-10-23T02:00:00-07:00",
+     "position": 1,
+     "updated_at": "2026-10-23T02:00:00-07:00",
+     "product_id": 10470000000002,
+     "variant_ids": [],
+     "src": "https://cdn.shopify.com/s/files/1/0001/0002/0003/files/wildwood-limited-edition.jpg?v=1763400000",
+     "width": 1200,
+     "height": 1500
+    }
+   ],
+   "options": [
+    {
+     "name": "Title",
+     "position": 1,
+     "values": [
+      "Default Title"
+     ]
+    }
+   ]
+  }
+ ]
+}

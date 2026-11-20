@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .shops import DEFAULT_KEYS
+
 
 def _int(name: str, default: int) -> int:
     try:
@@ -26,6 +28,15 @@ def _bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _names(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """A comma-separated list. Unset means the default; empty, "none" or "off" means nothing."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    names = tuple(part.strip().lower() for part in raw.split(",") if part.strip())
+    return () if names in {("none",), ("off",)} else names
+
+
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
@@ -45,6 +56,9 @@ class Settings:
     failure_backoff_seconds: float
     backlog_retry_minutes: int
     run_on_start: bool
+    shops: tuple[str, ...]  # shops whose own listings are watched (keys from app/shops.py)
+    shop_poll_minutes: int
+    news_enabled: bool  # HD Report's steelbook headlines in the daily digest
 
     @property
     def db_path(self) -> Path:
@@ -70,4 +84,7 @@ def load() -> Settings:
         failure_backoff_seconds=max(0.0, _float("FAILURE_BACKOFF_SECONDS", 60)),
         backlog_retry_minutes=max(5, _int("BACKLOG_RETRY_MINUTES", 20)),
         run_on_start=_bool("RUN_ON_START", True),
+        shops=_names("SHOPS", DEFAULT_KEYS),
+        shop_poll_minutes=max(10, _int("SHOP_POLL_MINUTES", 60)),
+        news_enabled=_bool("NEWS_ENABLED", True),
     )
