@@ -12,6 +12,7 @@ os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="steelbook-tests-")
 
 import app.jobs  # noqa: E402
 import app.main  # noqa: E402
+import app.shops  # noqa: E402
 
 TODAY = date(2026, 10, 11)  # the day the Blu-ray.com fixtures were captured
 
@@ -29,6 +30,12 @@ def frozen_today(monkeypatch):
 
     monkeypatch.setattr(app.jobs, "date", FrozenDate)
     monkeypatch.setattr(app.main, "date", FrozenDate)
+
+
+@pytest.fixture(autouse=True)
+def no_gap_between_shops(monkeypatch):
+    """The shops are read a few seconds apart; the tests that check that say so themselves."""
+    monkeypatch.setattr(app.shops, "SHOP_GAP", 0)
 
 
 @pytest.fixture

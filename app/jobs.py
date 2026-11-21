@@ -226,7 +226,9 @@ class Tracker:
         realert_before = (datetime.now(timezone.utc)
                           - timedelta(hours=SHOP_REALERT_HOURS)).isoformat(timespec="seconds")
         async with shops.client() as http:
-            for shop in self.shops:
+            for n, shop in enumerate(self.shops):
+                if n:
+                    await asyncio.sleep(shops.SHOP_GAP)
                 try:
                     items = await shops.fetch(http, shop)
                 except Exception as e:
