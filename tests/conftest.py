@@ -3,12 +3,16 @@
 import asyncio
 import os
 import tempfile
+import time
 from datetime import date
 
 import pytest
 
 # app.main opens its database when it is imported, so point it somewhere disposable first.
 os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="steelbook-tests-")
+# Messages name times in the container's timezone; the tests expect UTC wherever they run.
+os.environ["TZ"] = "UTC"
+time.tzset()
 
 import app.jobs  # noqa: E402
 import app.main  # noqa: E402
@@ -34,8 +38,10 @@ def frozen_today(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def no_gap_between_shops(monkeypatch):
-    """The shops are read a few seconds apart; the tests that check that say so themselves."""
+    """The shops are read a few seconds apart and never twice within a few minutes.
+    Most tests read them back to back; the tests of those rules set them themselves."""
     monkeypatch.setattr(app.shops, "SHOP_GAP", 0)
+    monkeypatch.setattr(app.shops, "MIN_GAP", 0)
 
 
 @pytest.fixture

@@ -8,6 +8,7 @@ import asyncio
 import copy
 import json
 import re
+import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,7 +17,7 @@ import httpx
 import pytest
 import respx
 
-from app import config, shops
+from app import config, jobs, shops
 from app.db import DB
 from app.jobs import Tracker
 
@@ -322,12 +323,30 @@ async def test_one_shop_failing_is_reported_and_the_others_are_still_read(tracke
 
 
 # --- when the shops' platform says "too many requests" ----------------------------
-# Shopify limits automated readers and answers 429 with "Retry-After: 60" when it
-# has had enough of one, sometimes on the first request in an hour.
+# Shopify limits automated readers and answers 429 with "Retry-After: 60" when it has
+# had enough of one. Asking again within minutes keeps the refusal going, so a shop that
+# says it is left alone for half an hour, and no shop is asked twice within five minutes.
 
 BUSY = httpx.Response(429, headers={"Retry-After": "60"},
                       json={"errors": [{"message": "You have sent too many requests. Try again soon.",
                                         "extensions": {"code": "TOO_MANY_REQUESTS"}}]})
+NOON = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """The time the tracker goes by, moved by hand: clock.at(minutes after noon).
+    Ask for it before ``tracker``, so the tracker starts on this clock too."""
+    class Clock:
+        now = NOON
+
+        def at(self, minutes: float) -> datetime:
+            self.now = NOON + timedelta(minutes=minutes)
+            return self.now
+
+    c = Clock()
+    monkeypatch.setattr(jobs, "utcnow", lambda: c.now)
+    return c
 
 
 @pytest.fixture
@@ -337,7 +356,7 @@ def waits(monkeypatch):
     real_sleep = asyncio.sleep
 
     async def instant(seconds):
-        if seconds:  # the gap between shops is set to nothing for the tests
+        if seconds:  # the gap between shops is set to nothing for most tests
             taken.append(seconds)
         await real_sleep(0)
 
@@ -345,7 +364,7 @@ def waits(monkeypatch):
     return taken
 
 
-async def read_with(tracker, **answers) -> tuple[str, dict]:
+async def read_with(tracker, due_only: bool = False, **answers) -> tuple[str, dict]:
     """One shop check where a shop gives the listed answers in turn; the rest serve their list."""
     with respx.mock(assert_all_called=False) as router:
         routes = {}
@@ -354,65 +373,184 @@ async def read_with(tracker, **answers) -> tuple[str, dict]:
             routes[key] = router.get(url).mock(side_effect=[
                 a if isinstance(a, httpx.Response) else httpx.Response(200, json=a) for a in steps])
         router.post(HA).respond(200)
-        result = await tracker.run_shops()
+        result = await tracker.run_shops(due_only=due_only)
     return result, {key: route.call_count for key, route in routes.items()}
 
 
-async def test_too_many_requests_is_waited_out_and_asked_again(tracker, waits):
-    result, asked = await read_with(tracker, gruv=[BUSY, FEEDS["gruv"]])
-    assert result == "Shops: 3 of 3 read, 0 alerts."
-    assert asked == {"gruv": 2, "lionsgate": 1, "mvd": 1}
-    assert len(waits) == 1 and 62 <= waits[0] <= 66  # what the shop asked for, and a little over
-    assert fail_count(tracker, "Gruv") == 0
-    assert tracker.db.shop_counts()["gruv"]["listed"] == 3
-
-
-async def test_shop_that_keeps_saying_too_many_requests_fails_for_this_check_only(tracker, waits):
+async def test_shop_that_says_too_many_requests_is_left_alone_for_half_an_hour(clock, tracker, waits):
     await check(tracker)
-    result, asked = await read_with(tracker, gruv=[BUSY, BUSY, BUSY], mvd=[BUSY, BUSY, FEEDS["mvd"]])
+    clock.at(60)
+    result, asked = await read_with(tracker, gruv=[BUSY, FEEDS["gruv"]])
     assert result == "Shops: 2 of 3 read, 0 alerts."
-    assert asked == {"gruv": 3, "lionsgate": 1, "mvd": 3}  # asked again twice, then left alone
-    assert [w // 60 for w in waits] == [1, 2, 1, 2]  # a minute as asked, then two
-    assert all(2 <= w % 60 <= 6 for w in waits)  # and a few seconds over
+    assert asked == {"gruv": 1, "lionsgate": 1, "mvd": 1}  # not asked a second time
+    assert waits == []  # and nothing is sat out in the middle of a check
     assert fail_count(tracker, "Gruv") == 1
-    assert fail_count(tracker, "MVD Shop") == 0
-    assert ("Gruv's platform limits automated readers and turned the tracker away 3 times in a row"
-            in last_error(tracker, "Gruv"))
+    assert last_error(tracker, "Gruv").endswith(
+        "Throttled: Gruv's platform limits automated readers and turned the tracker away; "
+        "it is left alone until 13:30 UTC")
     assert tracker.db.shop_counts()["gruv"] == {"listed": 3, "available": 2}  # what it had is kept
 
+    clock.at(89)  # a minute before the half hour is up
+    result, asked = await read_with(tracker)
+    assert result == ("Shops: 2 of 2 read, 0 alerts. "
+                      "Not asked: Gruv until 13:30 UTC (it said too many requests).")
+    assert asked == {"gruv": 0, "lionsgate": 1, "mvd": 1}
+    assert fail_count(tracker, "Gruv") == 1  # being left alone is not another failure
+
+    clock.at(90)
     result, asked = await read_with(tracker)
     assert result == "Shops: 3 of 3 read, 0 alerts."
+    assert asked["gruv"] == 1
     assert fail_count(tracker, "Gruv") == 0
 
 
-@pytest.mark.parametrize("header", [{}, {"Retry-After": "Sat, 21 Nov 2026 16:13:46 GMT"}, {"Retry-After": "-5"}])
-async def test_a_minute_is_waited_when_the_shop_does_not_say_how_long(tracker, waits, header):
-    result, asked = await read_with(tracker, mvd=[httpx.Response(429, headers=header), FEEDS["mvd"]])
-    assert result == "Shops: 3 of 3 read, 0 alerts."
-    assert len(waits) == 1 and 62 <= waits[0] <= 66
-
-
-async def test_shop_that_asks_for_a_long_wait_is_left_for_the_next_check(tracker, waits):
-    result, asked = await read_with(tracker, lionsgate=[httpx.Response(429, headers={"Retry-After": "3600"}),
-                                                       FEEDS["lionsgate"]])
+@pytest.mark.parametrize("header, until", [
+    ({}, "12:30"),                                           # doesn't say: half an hour
+    ({"Retry-After": "Sat, 21 Nov 2026 16:13:46 GMT"}, "12:30"),  # says it in a form not worth parsing
+    ({"Retry-After": "-5"}, "12:30"),
+    ({"Retry-After": "60"}, "12:30"),                        # a minute is known not to be enough
+    ({"Retry-After": "7200"}, "14:00"),                      # asks for longer: gets longer
+])
+async def test_how_long_a_refusing_shop_is_left_alone(clock, tracker, header, until):
+    result, _ = await read_with(tracker, mvd=[httpx.Response(429, headers=header)])
     assert result == "Shops: 2 of 3 read, 0 alerts."
-    assert asked["lionsgate"] == 1
-    assert waits == []
-    assert "stay away for 3600 seconds" in last_error(tracker, "Lionsgate Limited")
+    assert last_error(tracker, "MVD Shop").endswith(f"it is left alone until {until} UTC")
+    assert tracker.shop_wait(SHOP["mvd"]) == (NOON.replace(hour=int(until[:2]), minute=int(until[3:])), True)
 
 
-async def test_other_refusals_are_not_asked_again(tracker, waits):
-    result, asked = await read_with(tracker, gruv=[httpx.Response(503), FEEDS["gruv"]],
-                                    mvd=[httpx.Response(403), FEEDS["mvd"]])
+async def test_restart_does_not_ask_a_shop_that_has_just_refused(clock, tracker):
+    """What happened on 2026-11-21: refused at 17:12, container updated at 17:16, asked again, refused again."""
+    await read_with(tracker, gruv=[BUSY], lionsgate=[BUSY], mvd=[BUSY])
+    assert [fail_count(tracker, s.name) for s in tracker.shops] == [1, 1, 1]
+
+    clock.at(3)
+    restarted = Tracker(tracker.s, DB(tracker.s.db_path))
+    result, asked = await read_with(restarted, due_only=True)
+    assert asked == {"gruv": 0, "lionsgate": 0, "mvd": 0}
+    assert result.startswith("Shops: none asked this time, 0 alerts. Not asked: Gruv until 12:30 UTC")
+    assert [fail_count(restarted, s.name) for s in restarted.shops] == [1, 1, 1]
+    assert 26 * 60 < restarted.next_shop_delay() <= 27 * 60  # comes back when the half hour is up
+
+    clock.at(30)
+    result, asked = await read_with(restarted, due_only=True)
+    assert result == "Shops: 3 of 3 read, 0 alerts."
+    assert asked == {"gruv": 1, "lionsgate": 1, "mvd": 1}
+
+
+async def test_no_shop_is_asked_twice_within_five_minutes(clock, tracker, monkeypatch):
+    """Scan now, pressed again and again, reads the shops once."""
+    monkeypatch.setattr(shops, "MIN_GAP", 300)
+    result, asked = await read_with(tracker)
+    assert result == "Shops: 3 of 3 read, 0 alerts."
+
+    clock.at(4)
+    result, asked = await read_with(tracker)
+    assert asked == {"gruv": 0, "lionsgate": 0, "mvd": 0}
+    assert result == ("Shops: none asked this time, 0 alerts. Not asked: Gruv until 12:05 UTC (it was just asked), "
+                      "Lionsgate Limited until 12:05 UTC (it was just asked), MVD Shop until 12:05 UTC (it was just asked).")
+    assert tracker.shop_wait(SHOP["gruv"]) == (NOON + timedelta(minutes=5), False)
+
+    clock.at(5)
+    result, asked = await read_with(tracker)
+    assert result == "Shops: 3 of 3 read, 0 alerts."
+    assert asked == {"gruv": 1, "lionsgate": 1, "mvd": 1}
+
+
+async def test_other_refusals_do_not_start_a_half_hour_wait(clock, tracker):
+    result, asked = await read_with(tracker, gruv=[httpx.Response(503)], mvd=[httpx.Response(403)])
     assert result == "Shops: 1 of 3 read, 0 alerts."
     assert asked == {"gruv": 1, "lionsgate": 1, "mvd": 1}
-    assert waits == []
+    assert tracker.shop_wait(SHOP["gruv"]) is None and tracker.shop_wait(SHOP["mvd"]) is None
 
 
-async def test_shops_are_read_a_few_seconds_apart(tracker, waits, monkeypatch):
+async def test_timer_reads_each_shop_when_it_is_due(clock, tracker):
+    assert tracker.next_shop_delay() == 5  # straight after start-up
+    result, asked = await read_with(tracker, due_only=True, gruv=[BUSY])
+    assert result == "Shops: 2 of 3 read, 0 alerts."
+    assert tracker.next_shop_delay() == 30 * 60  # Gruv's half hour ends before the others' hour
+
+    clock.at(10)
+    result, asked = await read_with(tracker, due_only=True)
+    assert result == "No shop is due." and asked == {"gruv": 0, "lionsgate": 0, "mvd": 0}
+    assert tracker.last_shop_result == "Shops: 2 of 3 read, 0 alerts."  # the last real read still shows
+
+    clock.at(30)
+    result, asked = await read_with(tracker, due_only=True)
+    assert result == "Shops: 1 of 1 read, 0 alerts."
+    assert asked == {"gruv": 1, "lionsgate": 0, "mvd": 0}
+    assert 28 * 60 <= tracker.next_shop_delay() <= 32 * 60  # the other two, an hour after their read
+
+    clock.at(62)
+    result, asked = await read_with(tracker, due_only=True)
+    assert result == "Shops: 2 of 2 read, 0 alerts."
+    assert asked == {"gruv": 0, "lionsgate": 1, "mvd": 1}
+
+
+async def test_timer_waits_a_whole_interval_when_told_not_to_read_at_start(tmp_path, monkeypatch, clock):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    s = replace(config.load(), ha_webhook_url=HA, news_enabled=False, run_on_start=False)
+    quiet = Tracker(s, DB(s.db_path))
+    assert 59 * 60 <= quiet.next_shop_delay() <= 61 * 60
+    result, asked = await read_with(quiet, due_only=True)
+    assert result == "No shop is due." and sum(asked.values()) == 0
+
+
+async def test_shops_are_read_a_few_seconds_apart(clock, tracker, waits, monkeypatch):
     monkeypatch.setattr(shops, "SHOP_GAP", 5)
     await read_with(tracker)
     assert waits == [5, 5]  # between the three shops, not before the first
+
+
+async def test_gap_holds_between_two_reads_as_well(clock, tracker, waits, monkeypatch):
+    """Scan now reads two shops two seconds before the timer's read of the third comes due."""
+    monkeypatch.setattr(shops, "SHOP_GAP", 5)
+    await read_with(tracker, gruv=[BUSY])  # Gruv is left alone until 12:30
+    clock.now = NOON + timedelta(minutes=30, seconds=-2)
+    _, asked = await read_with(tracker)
+    assert asked == {"gruv": 0, "lionsgate": 1, "mvd": 1}
+
+    waits.clear()
+    clock.at(30)
+    _, asked = await read_with(tracker, due_only=True)
+    assert asked == {"gruv": 1, "lionsgate": 0, "mvd": 0}
+    assert waits == [3]  # the rest of the five seconds since the last request
+
+    waits.clear()
+    clock.at(120)
+    await read_with(tracker)
+    assert waits == [5, 5]  # long after, nothing to wait for before the first
+
+
+async def test_last_read_does_not_move_when_no_shop_was_asked(clock, tracker, monkeypatch):
+    monkeypatch.setattr(shops, "MIN_GAP", 300)
+    await read_with(tracker)
+    assert tracker.last_shop_run == "2026-11-21T12:00:00+00:00"
+    clock.at(2)
+    result, _ = await read_with(tracker)
+    assert result.startswith("Shops: none asked this time")
+    assert tracker.last_shop_run == "2026-11-21T12:00:00+00:00"
+    assert tracker.last_shop_result == result  # but the page does say what the press did
+
+
+def test_messages_name_times_in_the_containers_timezone(monkeypatch):
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    try:
+        assert jobs._clock(NOON) == "04:00 PST"
+        assert jobs._clock(NOON.replace(month=7)) == "05:00 PDT"
+    finally:
+        monkeypatch.setenv("TZ", "UTC")
+        time.tzset()
+    assert jobs._clock(NOON) == "12:00 UTC"
+
+
+async def test_gap_is_between_shops_that_are_asked_only(clock, tracker, waits, monkeypatch):
+    monkeypatch.setattr(shops, "SHOP_GAP", 5)
+    await read_with(tracker, gruv=[BUSY])
+    waits.clear()
+    clock.at(10)
+    await read_with(tracker)  # Gruv is being left alone
+    assert waits == [5]
 
 
 async def test_answer_that_is_not_a_product_list_counts_as_a_failure(tracker):

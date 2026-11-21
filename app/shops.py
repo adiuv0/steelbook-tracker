@@ -13,23 +13,28 @@ None of the three shops' robots.txt files rules these addresses out.
 Shopify does limit automated readers, and since May 2026 most strictly those that
 don't sign their requests (shopify.dev changelog, "Bots and agents should identify
 themselves via Web Bot Auth"). The tracker is one of those. A reader the platform has
-had enough of is answered "429 Too Many Requests" with "Retry-After: 60". Seen on
-2026-11-21 with the tracker's own image: the three shops asked inside one second,
-two of them refused, on the tracker's very first read; the same shops asked five
-seconds apart, every five minutes for twenty minutes, never refused; and a reader that
-was refused and went on asking stayed refused well past the minute. So the tracker
-asks for little, one page per shop per check with a pause between shops, and when
-it is told to wait it waits that long and asks again, then twice that long and once
-more, before the shop counts as failed for that check.
+had enough of is answered "429 Too Many Requests" with "Retry-After: 60". What was
+seen on 2026-11-21 with the tracker's own image, from one home connection:
 
-That is all it does about the limit. The limit is the platform's decision, so the
-tracker is not to be dressed up as a browser, or made to connect differently, to get
-past it. A shop that keeps refusing shows as failing and is asked again at the next check.
+- The three shops asked inside one second: two of them refused, then (an hour later)
+  all three. Asked five seconds apart, every five minutes: served 18 times out of 18.
+- A reader that has been refused stays refused for much longer than the minute the
+  answer names. Asked again three, four and six minutes later it was refused each
+  time; left alone for twenty-three minutes it was served.
+
+So the rules here are: one page per shop per read, SHOP_GAP seconds between shops,
+never the same shop twice within MIN_GAP, and a shop that says "too many requests" is
+left alone for COOL_OFF (longer if it asks for longer) before it is asked again.
+Tracker._check_shops applies them to every read, whatever started it: the timer, a
+restart or the Scan now button.
+
+That is all the tracker does about the limit. The limit is the platform's decision, so
+the tracker is not to be dressed up as a browser, or made to connect differently, to
+get past it. A shop that keeps refusing shows as failing.
 """
 
 import asyncio
 import logging
-import random
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -45,17 +50,19 @@ PAGE_SIZE = 250
 MAX_PAGES = 4  # 1,000 products; the largest list today (Gruv) has about 240
 SHOP_GAP = 5  # seconds between two shops; they share one platform and its limiter
 PAGE_GAP = 5  # seconds between two pages of one list
-# "Too many requests" is waited out and asked again this many times per page: after the
-# wait the shop names, then after twice that.
-RETRIES = 2
-# How long to wait when the shop doesn't say, and the longest wait worth sitting
-# out. A shop that asks for longer is left for the next check.
-DEFAULT_RETRY_WAIT = 60
-MAX_RETRY_WAIT = 120
+MIN_GAP = 5 * 60  # seconds before the same shop may be asked again
+COOL_OFF = 30 * 60  # seconds a shop is left alone after it says "too many requests"
 
 
 class Throttled(Exception):
-    """The shop's platform went on answering "too many requests"."""
+    """The shop's platform answered "too many requests".
+
+    ``wait`` is how many seconds it asked the tracker to stay away (0 when it didn't say).
+    """
+
+    def __init__(self, wait: float, message: str = "the shop's platform said too many requests"):
+        super().__init__(message)
+        self.wait = wait
 
 
 @dataclass(frozen=True)
@@ -184,36 +191,21 @@ def client() -> httpx.AsyncClient:
 
 
 def _retry_wait(response: httpx.Response) -> float:
-    """Seconds the shop asked us to wait before asking again."""
+    """Seconds the shop asked us to stay away; 0 when it didn't say in seconds."""
     try:
         wait = float(response.headers.get("Retry-After", ""))
     except ValueError:  # missing, or a date instead of a number of seconds
-        return DEFAULT_RETRY_WAIT
-    return wait if wait >= 0 else DEFAULT_RETRY_WAIT
+        return 0
+    return max(wait, 0)
 
 
 async def _get_page(http: httpx.AsyncClient, shop: Shop, page: int) -> httpx.Response:
-    """One page of the shop's list, waiting and asking again when told "too many requests"."""
-    params = {"limit": PAGE_SIZE, "page": page}
-    asked = 0
-    while True:
-        r = await http.get(shop.feed_url, params=params)
-        asked += 1
-        if r.status_code != 429:
-            r.raise_for_status()
-            return r
-        wait = _retry_wait(r)
-        if wait > MAX_RETRY_WAIT:
-            raise Throttled(f"{shop.name}'s platform limits automated readers and asked the tracker "
-                            f"to stay away for {wait:.0f} seconds; it will be asked again at the next check")
-        if asked > RETRIES:
-            raise Throttled(f"{shop.name}'s platform limits automated readers and turned the tracker "
-                            f"away {asked} times in a row; it will be asked again at the next check")
-        # Twice as long the second time, and a few seconds over, so the next request
-        # doesn't land on the very end of the wait.
-        wait = wait * 2 ** (asked - 1) + random.uniform(2, 6)
-        log.info("%s says too many requests; asking again in %.0f seconds", shop.name, wait)
-        await asyncio.sleep(wait)
+    """One page of the shop's list. "Too many requests" is not argued with: see COOL_OFF."""
+    r = await http.get(shop.feed_url, params={"limit": PAGE_SIZE, "page": page})
+    if r.status_code == 429:
+        raise Throttled(_retry_wait(r))
+    r.raise_for_status()
+    return r
 
 
 async def fetch(http: httpx.AsyncClient, shop: Shop) -> list[dict]:

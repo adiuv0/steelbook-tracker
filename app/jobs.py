@@ -21,6 +21,15 @@ SOURCE_NEWS = f"{news.NAME} headlines"
 SHOP_REALERT_HOURS = 24
 
 
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _clock(when: datetime) -> str:
+    """A time of day for a message, in the container's timezone (TZ): "09:30 PST"."""
+    return when.astimezone().strftime("%H:%M %Z")
+
+
 def describe(error: Exception) -> str:
     """Error text for logs and alerts. Some errors (timeouts) carry no message."""
     return f"{type(error).__name__}: {error}" if str(error) else type(error).__name__
@@ -38,6 +47,11 @@ class Tracker:
         self.shop_lock = asyncio.Lock()
         self.last_shop_run: str | None = None
         self.last_shop_result: str | None = None
+        # When the timer next reads each shop. Kept in memory: after a restart every shop
+        # is due at once, and shop_wait() holds back the ones asked a moment ago.
+        first = utcnow() if settings.run_on_start else utcnow() + self._shop_interval()
+        self._shop_due = {shop.key: first for shop in self.shops}
+        self._last_shop_request: datetime | None = None
         self.sources = (SOURCE_SEARCH, SOURCE_PRODUCT, SOURCE_HA,
                         *(shop.name for shop in self.shops),
                         *((SOURCE_NEWS,) if settings.news_enabled else ()))
@@ -61,26 +75,67 @@ class Tracker:
             log.info(result)
             return result
 
-    async def run_shops(self) -> str:
+    async def run_shops(self, due_only: bool = False) -> str:
         """Read the shops' own listings and send their alerts.
 
         One quick request per shop, so this runs on its own, shorter timer
         (SHOP_POLL_MINUTES) instead of waiting for the slow Blu-ray.com scan.
+        The timer reads the shops that are due (``due_only``); Scan now asks for all
+        of them. Either way a shop that was asked a moment ago, or that said "too many
+        requests", is left alone until shop_wait() says otherwise.
         """
         if not self.shops:
             return "No shops are being watched."
         if self.shop_lock.locked():
             return "A shop check is already running."
+        now = utcnow()
+        wanted = [shop for shop in self.shops if not due_only or self._shop_due[shop.key] <= now]
+        if not wanted:
+            return "No shop is due."
         async with self.shop_lock:
             try:
-                result = await self._check_shops()
+                result, asked = await self._check_shops(wanted)
             except Exception as e:  # never let one bad run kill the scheduler
                 log.exception("shop check failed")
-                result = f"Shop check failed: {describe(e)}"
-            self.last_shop_run = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                result, asked = f"Shop check failed: {describe(e)}", True
+            if asked:  # "last read" stays put when every shop was being left alone
+                self.last_shop_run = utcnow().isoformat(timespec="seconds")
             self.last_shop_result = result
             log.info(result)
             return result
+
+    def shop_wait(self, shop: shops.Shop, now: datetime | None = None) -> tuple[datetime, bool] | None:
+        """Until when a shop is left alone, and whether that is because it refused the tracker.
+
+        None when it may be asked now. Kept in the database, so a restart (an update
+        of the container, say) doesn't ask a shop again minutes after it said no.
+        """
+        now = now or utcnow()
+        asked = self._meta_time(f"shop_asked:{shop.key}")
+        refused = self._meta_time(f"shop_refused_until:{shop.key}")
+        if refused and refused > now:
+            return refused, True
+        if asked and asked + timedelta(seconds=shops.MIN_GAP) > now:
+            return asked + timedelta(seconds=shops.MIN_GAP), False
+        return None
+
+    def next_shop_delay(self) -> float:
+        """Seconds until the timer should read the shops again."""
+        now = utcnow()
+        soonest = min(max(self._shop_due[shop.key], (self.shop_wait(shop, now) or (now, False))[0])
+                      for shop in self.shops)
+        # Never less than a few seconds, so a check that is already running isn't raced.
+        return max(5.0, (soonest - now).total_seconds())
+
+    def _shop_interval(self) -> timedelta:
+        # Jitter so requests don't land on the same minute every time.
+        return timedelta(seconds=self.s.shop_poll_minutes * 60 + random.uniform(-60, 60))
+
+    def _meta_time(self, key: str) -> datetime | None:
+        try:
+            return datetime.fromisoformat(self.db.get_meta(key) or "")
+        except ValueError:
+            return None
 
     async def send_digest(self, force: bool = False) -> str:
         releases = self.db.pending_digest()
@@ -221,19 +276,47 @@ class Tracker:
             self.db.set_meta("news_seeded", datetime.now(timezone.utc).isoformat())
         await self._ok(SOURCE_NEWS)
 
-    async def _check_shops(self) -> str:
+    async def _check_shops(self, wanted: list[shops.Shop]) -> tuple[str, int]:
+        """Read the wanted shops that may be asked now. Returns what happened, and how many were asked."""
         read = 0
+        asked = 0
+        left_alone: list[str] = []
         realert_before = (datetime.now(timezone.utc)
                           - timedelta(hours=SHOP_REALERT_HOURS)).isoformat(timespec="seconds")
+        next_read = utcnow() + self._shop_interval()
         async with shops.client() as http:
-            for n, shop in enumerate(self.shops):
-                if n:
-                    await asyncio.sleep(shops.SHOP_GAP)
+            for shop in wanted:
+                now = utcnow()
+                wait = self.shop_wait(shop, now)
+                if wait:
+                    until, refused = wait
+                    left_alone.append(f"{shop.name} until {_clock(until)}"
+                                      + (" (it said too many requests)" if refused else " (it was just asked)"))
+                    continue
+                # A few seconds after the last request to any shop, whichever read made it.
+                if self._last_shop_request:
+                    since = max((now - self._last_shop_request).total_seconds(), 0)
+                    if since < shops.SHOP_GAP:
+                        await asyncio.sleep(shops.SHOP_GAP - since)
+                        now = utcnow()
+                asked += 1
+                self.db.set_meta(f"shop_asked:{shop.key}", now.isoformat(timespec="seconds"))
+                self._shop_due[shop.key] = next_read
                 try:
                     items = await shops.fetch(http, shop)
+                except shops.Throttled as e:
+                    until = now + timedelta(seconds=max(shops.COOL_OFF, e.wait))
+                    self.db.set_meta(f"shop_refused_until:{shop.key}", until.isoformat(timespec="seconds"))
+                    self._shop_due[shop.key] = until
+                    await self._fail(shop.name, shops.Throttled(
+                        e.wait, f"{shop.name}'s platform limits automated readers and turned the tracker "
+                                f"away; it is left alone until {_clock(until)}"))
+                    continue
                 except Exception as e:
                     await self._fail(shop.name, e)
                     continue
+                finally:
+                    self._last_shop_request = utcnow()
                 # A shop's first read only records what it already sells.
                 seeded_key = f"shop_seeded:{shop.key}"
                 first = self.db.get_meta(seeded_key) is None
@@ -255,7 +338,11 @@ class Tracker:
             self.db.mark_shop_alerted(key, [r["id"] for r in rows])
             sent += 1
         note = self._delivery_note(delivered) if sent or not delivered else ""
-        return f"Shops: {read} of {len(self.shops)} read, {sent} alert{'s' if sent != 1 else ''}{note}."
+        head = f"{read} of {asked} read" if asked else "none asked this time"
+        result = f"Shops: {head}, {sent} alert{'s' if sent != 1 else ''}{note}."
+        if left_alone:
+            result += f" Not asked: {', '.join(left_alone)}."
+        return result, asked
 
     async def _check_products(self, br: BluRayClient, rows) -> int:
         """Check product pages, riding out short outages instead of giving up.

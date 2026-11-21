@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import random
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -62,15 +61,22 @@ async def scan_loop():
 
 
 async def shop_loop():
-    """The shops take one quick request each, so they are read more often than Blu-ray.com."""
+    """The shops take one quick request each, so they are read more often than Blu-ray.com.
+
+    The tracker keeps a time for each shop (a shop that said "too many requests" comes
+    round again sooner than the rest, and no sooner than it should), so this only
+    sleeps until the next one is due.
+    """
     if not tracker.shops:
         return
-    if settings.run_on_start:
-        await asyncio.sleep(2)
-        await tracker.run_shops()
     while True:
-        await asyncio.sleep(settings.shop_poll_minutes * 60 + random.uniform(-60, 60))
-        await tracker.run_shops()
+        try:
+            delay = tracker.next_shop_delay()
+        except Exception:  # e.g. the database is briefly locked; the loop must survive
+            log.exception("could not work out the next shop read")
+            delay = settings.shop_poll_minutes * 60
+        await asyncio.sleep(delay)
+        await tracker.run_shops(due_only=True)
 
 
 async def digest_loop():
@@ -128,6 +134,9 @@ async def index(request: Request, view: str = "upcoming"):
             "shop_names": {shop.key: shop.name for shop in tracker.shops},
             "shop_poll_minutes": settings.shop_poll_minutes,
             "last_shop_run": tracker.last_shop_run,
+            "last_shop_result": tracker.last_shop_result,
+            "shops_checking": tracker.shop_lock.locked(),
+            "shop_waits": {shop.key: wait for shop in tracker.shops if (wait := tracker.shop_wait(shop))},
             "news": {"name": news.NAME, "url": news.SITE_URL} if settings.news_enabled else None,
             "headlines": db.recent_headlines() if settings.news_enabled else [],
         },
@@ -167,6 +176,7 @@ async def api_summary():
         "last_run": tracker.last_run,
         "last_shop_run": tracker.last_shop_run,
         "scanning": tracker.lock.locked(),
+        "shops_checking": tracker.shop_lock.locked(),
         "sources_failing": sum(1 for h in db.health() if h["fail_count"] > 0),
         "notifications_configured": bool(settings.ha_webhook_url),
         # False: the database is not on a mapped folder and will not survive an update.
