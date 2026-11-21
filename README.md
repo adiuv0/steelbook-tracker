@@ -58,7 +58,8 @@ What can be ordered right now is listed under **At the shops** on the web page, 
 Things to know:
 
 - Shop listings are not matched to the cards from Blu-ray.com. The same film can appear in both places, and **Purchased** / **Hide** on a card doesn't stop a shop alert for it.
-- A hot title can sell out between two checks. Lower `SHOP_POLL_MINUTES` (minimum 10) to look more often.
+- A hot title can sell out between two checks. Lower `SHOP_POLL_MINUTES` (minimum 10) to look more often, but read the next point first.
+- All three shops run on Shopify, which limits automated readers, and since May 2026 limits most strictly the ones that don't sign their requests. The tracker doesn't. Now and then a shop therefore answers "too many requests" instead of its list, even when it hasn't been asked for an hour. The tracker waits as long as it is told to (a minute) and asks again, then waits twice as long and asks once more, before giving up on that shop for the check. A shop that still refuses shows as failing under **Sources** with a note saying why, keeps the listings it had, and is asked again at the next check; three failed checks in a row send the usual "source failing" alert. The tracker does not pose as a browser to get past the limit, and asking more often can only make it bite more.
 - Leave a shop out of `SHOPS` to stop watching it, or set `SHOPS=none` to switch the feature off.
 
 ### Why these sources

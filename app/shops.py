@@ -8,13 +8,28 @@ Gruv, Lionsgate Limited and MVD Shop run on Shopify, whose storefront serves the
 products of any collection as JSON (``/collections/<handle>/products.json``, or
 ``/products.json`` for the whole shop), 250 to a page. Every product carries a
 per-variant ``available`` flag: the shop's own answer to "can this be ordered".
-None of the three shops' robots.txt files rules these addresses out, and one
-request reads a whole shop, so it is asked for no more than a visitor's browser
-would load.
+None of the three shops' robots.txt files rules these addresses out.
+
+Shopify does limit automated readers, and since May 2026 most strictly those that
+don't sign their requests (shopify.dev changelog, "Bots and agents should identify
+themselves via Web Bot Auth"). The tracker is one of those. A reader the platform has
+had enough of is answered "429 Too Many Requests" with "Retry-After: 60". Seen on
+2026-11-21 with the tracker's own image: the three shops asked inside one second,
+two of them refused, on the tracker's very first read; the same shops asked five
+seconds apart, every five minutes for twenty minutes, never refused; and a reader that
+was refused and went on asking stayed refused well past the minute. So the tracker
+asks for little, one page per shop per check with a pause between shops, and when
+it is told to wait it waits that long and asks again, then twice that long and once
+more, before the shop counts as failed for that check.
+
+That is all it does about the limit. The limit is the platform's decision, so the
+tracker is not to be dressed up as a browser, or made to connect differently, to get
+past it. A shop that keeps refusing shows as failing and is asked again at the next check.
 """
 
 import asyncio
 import logging
+import random
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,6 +43,19 @@ log = logging.getLogger(__name__)
 USER_AGENT = "steelbook-tracker/1.0"
 PAGE_SIZE = 250
 MAX_PAGES = 4  # 1,000 products; the largest list today (Gruv) has about 240
+SHOP_GAP = 5  # seconds between two shops; they share one platform and its limiter
+PAGE_GAP = 5  # seconds between two pages of one list
+# "Too many requests" is waited out and asked again this many times per page: after the
+# wait the shop names, then after twice that.
+RETRIES = 2
+# How long to wait when the shop doesn't say, and the longest wait worth sitting
+# out. A shop that asks for longer is left for the next check.
+DEFAULT_RETRY_WAIT = 60
+MAX_RETRY_WAIT = 120
+
+
+class Throttled(Exception):
+    """The shop's platform went on answering "too many requests"."""
 
 
 @dataclass(frozen=True)
@@ -155,14 +183,46 @@ def client() -> httpx.AsyncClient:
                              timeout=30, follow_redirects=True)
 
 
+def _retry_wait(response: httpx.Response) -> float:
+    """Seconds the shop asked us to wait before asking again."""
+    try:
+        wait = float(response.headers.get("Retry-After", ""))
+    except ValueError:  # missing, or a date instead of a number of seconds
+        return DEFAULT_RETRY_WAIT
+    return wait if wait >= 0 else DEFAULT_RETRY_WAIT
+
+
+async def _get_page(http: httpx.AsyncClient, shop: Shop, page: int) -> httpx.Response:
+    """One page of the shop's list, waiting and asking again when told "too many requests"."""
+    params = {"limit": PAGE_SIZE, "page": page}
+    asked = 0
+    while True:
+        r = await http.get(shop.feed_url, params=params)
+        asked += 1
+        if r.status_code != 429:
+            r.raise_for_status()
+            return r
+        wait = _retry_wait(r)
+        if wait > MAX_RETRY_WAIT:
+            raise Throttled(f"{shop.name}'s platform limits automated readers and asked the tracker "
+                            f"to stay away for {wait:.0f} seconds; it will be asked again at the next check")
+        if asked > RETRIES:
+            raise Throttled(f"{shop.name}'s platform limits automated readers and turned the tracker "
+                            f"away {asked} times in a row; it will be asked again at the next check")
+        # Twice as long the second time, and a few seconds over, so the next request
+        # doesn't land on the very end of the wait.
+        wait = wait * 2 ** (asked - 1) + random.uniform(2, 6)
+        log.info("%s says too many requests; asking again in %.0f seconds", shop.name, wait)
+        await asyncio.sleep(wait)
+
+
 async def fetch(http: httpx.AsyncClient, shop: Shop) -> list[dict]:
     """Every 4K steelbook the shop lists right now. Raises when the list can't be read."""
     products: list[dict] = []
     for page in range(1, MAX_PAGES + 1):
         if page > 1:
-            await asyncio.sleep(1)
-        r = await http.get(shop.feed_url, params={"limit": PAGE_SIZE, "page": page})
-        r.raise_for_status()
+            await asyncio.sleep(PAGE_GAP)
+        r = await _get_page(http, shop, page)
         data = r.json()
         batch = data.get("products") if isinstance(data, dict) else None
         if not isinstance(batch, list):
