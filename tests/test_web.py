@@ -1,6 +1,8 @@
+import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -168,3 +170,62 @@ async def test_scan_now_also_reads_the_shops(monkeypatch):
 
 def test_summary_says_when_the_shops_were_last_read(client):
     assert client.get("/api/summary").json()["last_shop_run"] is None
+
+
+def shops_panel(client) -> str:
+    return " ".join(client.get("/").text.split("<h2>At the shops</h2>")[1].split("<h2>")[0].split())
+
+
+def test_page_says_which_shop_is_being_left_alone_and_what_the_last_read_did(client, monkeypatch):
+    until = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=25)
+    main.db.set_meta("shop_refused_until:mvd", until.isoformat())
+    # Gruv was only asked a moment ago: that needs no note, it is the normal state after a read.
+    monkeypatch.setattr(shops, "MIN_GAP", 300)
+    main.db.set_meta("shop_asked:gruv", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    monkeypatch.setattr(main.tracker, "last_shop_run", "2026-11-21T17:19:02+00:00")
+    monkeypatch.setattr(main.tracker, "last_shop_result", "Shops: 2 of 3 read, 0 alerts.")
+    try:
+        panel = shops_panel(client)
+    finally:
+        main.db.set_meta("shop_refused_until:mvd", "")
+        main.db.set_meta("shop_asked:gruv", "")
+    assert (f'MVD Shop</a> (it said "too many requests", so it is left alone until '
+            f'<time datetime="{until.isoformat()}">{until:%H:%M} UTC</time>).') in panel
+    assert panel.count("(it said") == 1  # only the one that refused
+    assert 'Last read <time datetime="2026-11-21T17:19:02+00:00">' in panel
+    assert "Shops: 2 of 3 read, 0 alerts." in panel
+
+
+def test_page_and_summary_say_when_the_shops_are_being_read(client, monkeypatch):
+    assert client.get("/api/summary").json()["shops_checking"] is False
+    assert "Reading the shops now" not in shops_panel(client)
+
+    monkeypatch.setattr(main.tracker, "shop_lock", SimpleNamespace(locked=lambda: True))
+    monkeypatch.setattr(main.tracker, "last_shop_result", "Shops: 3 of 3 read, 0 alerts.")
+    assert client.get("/api/summary").json()["shops_checking"] is True
+    panel = shops_panel(client)
+    assert "<strong>Reading the shops now…</strong>" in panel
+    assert "Shops: 3 of 3 read" not in panel  # the last read's result would be stale next to that
+
+
+def test_scan_now_waits_for_the_shops_before_reloading_the_page(client):
+    assert "!s.scanning && !s.shops_checking &&" in client.get("/").text
+
+
+async def test_timer_sleeps_until_a_shop_is_due_and_reads_only_what_is_due(monkeypatch):
+    events = []
+
+    async def sleep(seconds):
+        events.append(("sleep", seconds))
+        if len(events) > 3:
+            raise asyncio.CancelledError
+
+    async def read_shops(due_only=False):
+        events.append(("read", due_only))
+
+    monkeypatch.setattr(main.asyncio, "sleep", sleep)
+    monkeypatch.setattr(main.tracker, "next_shop_delay", lambda: 1800.0)
+    monkeypatch.setattr(main.tracker, "run_shops", read_shops)
+    with pytest.raises(asyncio.CancelledError):
+        await main.shop_loop()
+    assert events[:3] == [("sleep", 1800.0), ("read", True), ("sleep", 1800.0)]

@@ -33,6 +33,9 @@
            color: var(--text); border-radius: 8px; padding: 5px 10px; font-size: 13px; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.on { background: var(--ok); border-color: var(--ok); color: #fff; }
+  /* The one action in a row of tabs: outlined so it doesn't pass for one of them. */
+  #scan { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  #scan:disabled { border-color: var(--line); color: var(--muted); cursor: default; }
   main { max-width: 1200px; margin: 0 auto; padding: 8px 16px 32px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
@@ -90,7 +93,7 @@
     <a href="?view={{ key }}" class="{{ 'on' if key == view }}">{{ label }}{% if counts.get(key) %} ({{ counts[key] }}){% endif %}</a>
   {% endfor %}
   <span class="spacer"></span>
-  <button id="scan" data-last-run="{{ last_run or '' }}" {{ 'disabled' if scanning }}>{{ 'Scanning…' if scanning else 'Scan now' }}</button>
+  <button id="scan" data-last-run="{{ last_run or '' }}" title="Scan Blu-ray.com now and read the shops again. A shop that was just asked, or that said &quot;too many requests&quot;, is left alone until it is due." {{ 'disabled' if scanning }}>{{ 'Scanning…' if scanning else '↻ Scan now' }}</button>
 </nav>
 <main>
   {% set watched_shops = shop_names.values()|map('lower')|list %}
@@ -166,11 +169,14 @@
       {% else %}<div class="meta">The shops haven't been read yet.</div>{% endif %}
       <div class="meta" style="margin-top:8px">
         Newest listings and restocks of 4K steelbooks, read from each shop every {{ shop_poll_minutes }} minutes.
-        {% for shop in shops %}{% set n = shop_counts.get(shop.key) %}
-        <a href="{{ shop.page_url }}" target="_blank" rel="noopener">{{ shop.name }}</a>{% if n %}: {{ n.available }} of {{ n.listed }} can be ordered{% endif %}{{ '.' if loop.last else ' ·' }}
+        {% for shop in shops %}{% set n = shop_counts.get(shop.key) %}{% set wait = shop_waits.get(shop.key) %}
+        <a href="{{ shop.page_url }}" target="_blank" rel="noopener">{{ shop.name }}</a>{% if n %}: {{ n.available }} of {{ n.listed }} can be ordered{% endif %}{% if wait and wait[1] %}
+        (it said "too many requests", so it is left alone until <time datetime="{{ wait[0].isoformat() }}">{{ wait[0].strftime('%H:%M') }} UTC</time>){% endif %}{{ '.' if loop.last else ' ·' }}
         {% endfor %}
-        {% if last_shop_run %}Last read <time datetime="{{ last_shop_run }}">{{ last_shop_run[:16].replace('T', ' ') }} UTC</time>.{% endif %}
+        {% if shops_checking %}<strong>Reading the shops now…</strong>
+        {% elif last_shop_run %}Last read <time datetime="{{ last_shop_run }}">{{ last_shop_run[:16].replace('T', ' ') }} UTC</time>.{% endif %}
       </div>
+      {% if last_shop_result and not shops_checking %}<div class="meta" style="margin-top:8px">{{ last_shop_result }}</div>{% endif %}
     </div>
     {% endif %}
     {% if news %}
@@ -207,7 +213,7 @@ function waitForScan() {
   const timer = setInterval(async () => {
     try {
       const s = await (await fetch('/api/summary')).json();
-      if (!s.scanning && (s.last_run || '') !== scanBtn.dataset.lastRun) { clearInterval(timer); location.reload(); }
+      if (!s.scanning && !s.shops_checking && (s.last_run || '') !== scanBtn.dataset.lastRun) { clearInterval(timer); location.reload(); }
     } catch (e) { /* server restarting; keep waiting */ }
   }, 5000);
 }
