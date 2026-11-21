@@ -136,7 +136,7 @@ async def index(request: Request, view: str = "upcoming"):
             "last_shop_run": tracker.last_shop_run,
             "last_shop_result": tracker.last_shop_result,
             "shops_checking": tracker.shop_lock.locked(),
-            "shop_waits": {shop.key: wait for shop in tracker.shops if (wait := tracker.shop_wait(shop))},
+            "shops_quiet": tracker.shops_quiet(),
             "news": {"name": news.NAME, "url": news.SITE_URL} if settings.news_enabled else None,
             "headlines": db.recent_headlines() if settings.news_enabled else [],
         },
@@ -177,6 +177,8 @@ async def api_summary():
         "last_shop_run": tracker.last_shop_run,
         "scanning": tracker.lock.locked(),
         "shops_checking": tracker.shop_lock.locked(),
+        # Set while no shop is asked because one of them said "too many requests".
+        "shops_left_alone_until": quiet[0].isoformat() if (quiet := tracker.shops_quiet()) else None,
         "sources_failing": sum(1 for h in db.health() if h["fail_count"] > 0),
         "notifications_configured": bool(settings.ha_webhook_url),
         # False: the database is not on a mapped folder and will not survive an update.

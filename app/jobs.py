@@ -52,6 +52,7 @@ class Tracker:
         first = utcnow() if settings.run_on_start else utcnow() + self._shop_interval()
         self._shop_due = {shop.key: first for shop in self.shops}
         self._last_shop_request: datetime | None = None
+        self._adopt_old_shop_waits()
         self.sources = (SOURCE_SEARCH, SOURCE_PRODUCT, SOURCE_HA,
                         *(shop.name for shop in self.shops),
                         *((SOURCE_NEWS,) if settings.news_enabled else ()))
@@ -81,8 +82,8 @@ class Tracker:
         One quick request per shop, so this runs on its own, shorter timer
         (SHOP_POLL_MINUTES) instead of waiting for the slow Blu-ray.com scan.
         The timer reads the shops that are due (``due_only``); Scan now asks for all
-        of them. Either way a shop that was asked a moment ago, or that said "too many
-        requests", is left alone until shop_wait() says otherwise.
+        of them. Either way a shop that was asked a moment ago is left alone, and so is
+        every shop while one of them has said "too many requests": see shop_wait().
         """
         if not self.shops:
             return "No shops are being watched."
@@ -104,20 +105,36 @@ class Tracker:
             log.info(result)
             return result
 
-    def shop_wait(self, shop: shops.Shop, now: datetime | None = None) -> tuple[datetime, bool] | None:
-        """Until when a shop is left alone, and whether that is because it refused the tracker.
+    def shops_quiet(self, now: datetime | None = None) -> tuple[datetime, str] | None:
+        """Until when no shop is asked because one said "too many requests", and which one said it.
 
-        None when it may be asked now. Kept in the database, so a restart (an update
-        of the container, say) doesn't ask a shop again minutes after it said no.
+        None when that isn't so. The shops share one platform and it refuses them
+        together, so one refusal quiets them all. Kept in the database, so a restart
+        (an update of the container, say) doesn't ask again minutes after a refusal.
+        """
+        until = self._meta_time("shops_quiet_until")
+        if until and until > (now or utcnow()):
+            return until, self.db.get_meta("shops_quiet_by") or "One of them"
+        return None
+
+    def shop_wait(self, shop: shops.Shop, now: datetime | None = None) -> tuple[datetime, bool] | None:
+        """Until when a shop is left alone, and whether that is because the tracker was refused.
+
+        None when it may be asked now.
         """
         now = now or utcnow()
-        asked = self._meta_time(f"shop_asked:{shop.key}")
-        refused = self._meta_time(f"shop_refused_until:{shop.key}")
-        if refused and refused > now:
-            return refused, True
-        if asked and asked + timedelta(seconds=shops.MIN_GAP) > now:
-            return asked + timedelta(seconds=shops.MIN_GAP), False
+        quiet = self.shops_quiet(now)
+        if quiet:
+            return quiet[0], True
+        again = self._may_ask_again(shop)
+        if again and again > now:
+            return again, False
         return None
+
+    def _may_ask_again(self, shop: shops.Shop) -> datetime | None:
+        """MIN_GAP after the shop was last asked; None if it never was."""
+        asked = self._meta_time(f"shop_asked:{shop.key}")
+        return asked + timedelta(seconds=shops.MIN_GAP) if asked else None
 
     def next_shop_delay(self) -> float:
         """Seconds until the timer should read the shops again."""
@@ -136,6 +153,38 @@ class Tracker:
             return datetime.fromisoformat(self.db.get_meta(key) or "")
         except ValueError:
             return None
+
+    def _refused(self, shop: shops.Shop, now: datetime, wait: float) -> tuple[datetime, int]:
+        """Note that a shop said "too many requests". Returns until when no shop is asked,
+        and how many reads in a row have now ended that way.
+
+        Each refusal in a row doubles the wait, up to MAX_COOL_OFF: a reader that goes
+        on asking stays refused, so the tracker asks less and less until it is served.
+        """
+        try:
+            count = int(self.db.get_meta("shops_refusals") or 0) + 1
+        except ValueError:
+            count = 1
+        pause = min(shops.COOL_OFF * 2 ** (count - 1), shops.MAX_COOL_OFF)
+        until = now + timedelta(seconds=max(pause, wait))
+        self.db.set_meta("shops_refusals", str(count))
+        self.db.set_meta("shops_quiet_until", until.isoformat(timespec="seconds"))
+        self.db.set_meta("shops_quiet_by", shop.name)
+        self.db.set_meta(f"shop_refused_at:{shop.key}", now.isoformat(timespec="seconds"))
+        return until, count
+
+    def _adopt_old_shop_waits(self) -> None:
+        """An earlier version kept one wait per shop. Carry the longest over, so the
+        update that brings this version doesn't ask a shop before its wait is up."""
+        old = [(until, shop.name) for shop in shops.SHOPS
+               if (until := self._meta_time(f"shop_refused_until:{shop.key}"))]
+        if not old:
+            return
+        until, name = max(old)
+        if until > utcnow():  # nothing newer can exist: no shop has been asked since
+            self.db.set_meta("shops_quiet_until", until.isoformat(timespec="seconds"))
+            self.db.set_meta("shops_quiet_by", name)
+            self.db.set_meta("shops_refusals", self.db.get_meta("shops_refusals") or "1")
 
     async def send_digest(self, force: bool = False) -> str:
         releases = self.db.pending_digest()
@@ -280,18 +329,33 @@ class Tracker:
         """Read the wanted shops that may be asked now. Returns what happened, and how many were asked."""
         read = 0
         asked = 0
-        left_alone: list[str] = []
+        just_asked: list[str] = []
+        quiet = None  # no shop was to be asked when this read began: (until when, who refused)
+        stopped = None  # a shop refused during this read: (until when, the shop)
         realert_before = (datetime.now(timezone.utc)
                           - timedelta(hours=SHOP_REALERT_HOURS)).isoformat(timespec="seconds")
         next_read = utcnow() + self._shop_interval()
+        # The shop that refused most recently goes last. If the refusal was about that one
+        # shop, the others are read before it says no again; if it was about the tracker,
+        # the next attempt goes to a different shop.
+        order = sorted(wanted, key=lambda shop: self.db.get_meta(f"shop_refused_at:{shop.key}") or "")
         async with shops.client() as http:
-            for shop in wanted:
+            for shop in order:
                 now = utcnow()
+                if stopped:
+                    # Not asked, so not read: a failed read like the one that refused. Unless
+                    # it was read a moment ago by another read, and wouldn't have been asked.
+                    if (self._may_ask_again(shop) or now) <= now:
+                        await self._fail(shop.name, shops.Throttled(
+                            0, f"not asked: {stopped[1].name} was just turned away, and the shops share "
+                               f"one platform; no shop is asked again until {_clock(stopped[0])}"))
+                    continue
                 wait = self.shop_wait(shop, now)
                 if wait:
-                    until, refused = wait
-                    left_alone.append(f"{shop.name} until {_clock(until)}"
-                                      + (" (it said too many requests)" if refused else " (it was just asked)"))
+                    if wait[1]:
+                        quiet = self.shops_quiet(now)
+                    else:
+                        just_asked.append(f"{shop.name} until {_clock(wait[0])} (it was just asked)")
                     continue
                 # A few seconds after the last request to any shop, whichever read made it.
                 if self._last_shop_request:
@@ -305,12 +369,12 @@ class Tracker:
                 try:
                     items = await shops.fetch(http, shop)
                 except shops.Throttled as e:
-                    until = now + timedelta(seconds=max(shops.COOL_OFF, e.wait))
-                    self.db.set_meta(f"shop_refused_until:{shop.key}", until.isoformat(timespec="seconds"))
-                    self._shop_due[shop.key] = until
+                    until, count = self._refused(shop, now, e.wait)
+                    stopped = (until, shop)
                     await self._fail(shop.name, shops.Throttled(
-                        e.wait, f"{shop.name}'s platform limits automated readers and turned the tracker "
-                                f"away; it is left alone until {_clock(until)}"))
+                        e.wait, f"{shop.name}'s platform limits automated readers and turned the tracker away"
+                                + (f" ({count} reads in a row now)" if count > 1 else "")
+                                + f"; no shop is asked again until {_clock(until)}"))
                     continue
                 except Exception as e:
                     await self._fail(shop.name, e)
@@ -323,6 +387,8 @@ class Tracker:
                 self.db.apply_shop_items(shop.key, items, quiet=first, realert_before=realert_before)
                 if first:
                     self.db.set_meta(seeded_key, datetime.now(timezone.utc).isoformat())
+                if self.db.get_meta("shops_refusals"):
+                    self.db.set_meta("shops_refusals", "")  # served: the next refusal starts from the short wait
                 await self._ok(shop.name)
                 read += 1
 
@@ -340,8 +406,12 @@ class Tracker:
         note = self._delivery_note(delivered) if sent or not delivered else ""
         head = f"{read} of {asked} read" if asked else "none asked this time"
         result = f"Shops: {head}, {sent} alert{'s' if sent != 1 else ''}{note}."
-        if left_alone:
-            result += f" Not asked: {', '.join(left_alone)}."
+        if stopped:
+            result += f" {stopped[1].name} said too many requests: no shop is asked again until {_clock(stopped[0])}."
+        elif quiet:
+            result += f" Not asked: every shop is left alone until {_clock(quiet[0])} ({quiet[1]} said too many requests)."
+        if just_asked:
+            result += f" Not asked: {', '.join(just_asked)}."
         return result, asked
 
     async def _check_products(self, br: BluRayClient, rows) -> int:
