@@ -93,7 +93,7 @@
     <a href="?view={{ key }}" class="{{ 'on' if key == view }}">{{ label }}{% if counts.get(key) %} ({{ counts[key] }}){% endif %}</a>
   {% endfor %}
   <span class="spacer"></span>
-  <button id="scan" data-last-run="{{ last_run or '' }}" title="Scan Blu-ray.com now and read the shops again. A shop that was just asked is left alone, and so are all of them for a while after one says &quot;too many requests&quot;." {{ 'disabled' if scanning }}>{{ 'Scanning…' if scanning else '↻ Scan now' }}</button>
+  <button id="scan" data-last-run="{{ last_run or '' }}" title="Scan Blu-ray.com now and read the shops again. A shop that was just asked is left alone, and so are all of them for a while after one turns the tracker away." {{ 'disabled' if scanning }}>{{ 'Scanning…' if scanning else '↻ Scan now' }}</button>
 </nav>
 <main>
   {% set watched_shops = shop_names.values()|map('lower')|list %}
@@ -168,11 +168,11 @@
       {% elif shop_counts %}<div class="meta">Nothing can be ordered at the shops right now.</div>
       {% else %}<div class="meta">The shops haven't been read yet.</div>{% endif %}
       <div class="meta" style="margin-top:8px">
-        Newest listings and restocks of 4K steelbooks, read from each shop every {{ shop_poll_minutes }} minutes.
+        Newest listings and restocks of 4K steelbooks, {% if shop_reader == 'browser' %}read about every {{ shop_poll_minutes }} minutes by opening each shop's page in a browser.{% else %}read from each shop every {{ shop_poll_minutes }} minutes.{% endif %}
         {% for shop in shops %}{% set n = shop_counts.get(shop.key) %}
         <a href="{{ shop.page_url }}" target="_blank" rel="noopener">{{ shop.name }}</a>{% if n %}: {{ n.available }} of {{ n.listed }} can be ordered{% endif %}{{ '.' if loop.last else ' ·' }}
         {% endfor %}
-        {% if shops_quiet %}<strong>{{ shops_quiet[1] }} said "too many requests".</strong> The shops share one platform, so none of them is asked again until <time datetime="{{ shops_quiet[0].isoformat() }}">{{ shops_quiet[0].strftime('%H:%M') }} UTC</time>.{% endif %}
+        {% if shops_quiet %}<strong>{{ shops_quiet[1] }} {{ shops_quiet[2] }}.</strong> The shops share one platform, so none of them is asked again until <time datetime="{{ shops_quiet[0].isoformat() }}">{{ shops_quiet[0].strftime('%H:%M') }} UTC</time>.{% endif %}
         {% if shops_checking %}<strong>Reading the shops now…</strong>
         {% elif last_shop_run %}Last read <time datetime="{{ last_shop_run }}">{{ last_shop_run[:16].replace('T', ' ') }} UTC</time>.{% endif %}
       </div>

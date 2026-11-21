@@ -386,7 +386,7 @@ async def test_one_refusal_stops_the_read_and_no_shop_is_asked_for_half_an_hour(
     clock.at(60)
     result, asked = await read_with(tracker, gruv=[BUSY, FEEDS["gruv"]])
     assert result == ("Shops: 0 of 1 read, 0 alerts. "
-                      "Gruv said too many requests: no shop is asked again until 13:30 UTC.")
+                      "Gruv said \"too many requests\": no shop is asked again until 13:30 UTC.")
     assert asked == {"gruv": 1, "lionsgate": 0, "mvd": 0}  # not asked again, and the others not at all
     assert waits == []  # and nothing is sat out in the middle of a check
     assert fails(tracker) == [1, 1, 1]  # none of the three could be read
@@ -397,12 +397,12 @@ async def test_one_refusal_stops_the_read_and_no_shop_is_asked_for_half_an_hour(
         "Throttled: not asked: Gruv was just turned away, and the shops share one platform; "
         "no shop is asked again until 13:30 UTC")
     assert tracker.db.shop_counts()["gruv"] == {"listed": 3, "available": 2}  # what it had is kept
-    assert tracker.shops_quiet() == (NOON + timedelta(minutes=90), "Gruv")
+    assert tracker.shops_quiet() == (NOON + timedelta(minutes=90), "Gruv", 'said "too many requests"')
 
     clock.at(89)  # a minute before the half hour is up: Scan now
     result, asked = await read_with(tracker)
     assert result == ("Shops: none asked this time, 0 alerts. "
-                      "Not asked: every shop is left alone until 13:30 UTC (Gruv said too many requests).")
+                      "Not asked: every shop is left alone until 13:30 UTC (Gruv said \"too many requests\").")
     assert sum(asked.values()) == 0
     assert fails(tracker) == [1, 1, 1]  # being left alone is not another failure
 
@@ -449,7 +449,7 @@ async def test_each_refusal_in_a_row_doubles_the_wait_and_goes_to_a_different_sh
 async def test_how_long_the_shops_are_left_alone(clock, tracker, header, until):
     result, _ = await read_with(tracker, mvd=[httpx.Response(429, headers=header)])
     assert result == ("Shops: 2 of 3 read, 0 alerts. "
-                      f"MVD Shop said too many requests: no shop is asked again until {until} UTC.")
+                      f"MVD Shop said \"too many requests\": no shop is asked again until {until} UTC.")
     assert last_error(tracker, "MVD Shop").endswith(f"no shop is asked again until {until} UTC")
     assert fails(tracker) == [0, 0, 1]  # the two read before it said no were read
     days = 1 if header.get("Retry-After") == "86400" else 0
@@ -479,7 +479,7 @@ async def test_shop_that_alone_keeps_refusing_does_not_hold_up_the_others(clock,
     clock.at(180)  # all three due at once: the one that refused last is asked last
     result, asked = await read_with(tracker, gruv=[BUSY])
     assert result == ("Shops: 2 of 3 read, 0 alerts. "
-                      "Gruv said too many requests: no shop is asked again until 15:30 UTC.")
+                      "Gruv said \"too many requests\": no shop is asked again until 15:30 UTC.")
     assert fails(tracker) == [3, 0, 0]
 
 
@@ -493,7 +493,7 @@ async def test_restart_does_not_ask_the_shops_again_after_a_refusal(clock, track
     result, asked = await read_with(restarted, due_only=True)
     assert sum(asked.values()) == 0
     assert result == ("Shops: none asked this time, 0 alerts. "
-                      "Not asked: every shop is left alone until 12:30 UTC (Gruv said too many requests).")
+                      "Not asked: every shop is left alone until 12:30 UTC (Gruv said \"too many requests\").")
     assert fails(restarted) == [1, 1, 1]
     assert 26 * 60 < restarted.next_shop_delay() <= 27 * 60  # comes back when the half hour is up
 
@@ -510,7 +510,8 @@ async def test_waits_kept_per_shop_by_the_previous_version_carry_over(clock, tra
     db.set_meta("shop_refused_until:mvd", (NOON + timedelta(minutes=21, seconds=57)).isoformat())
 
     updated = Tracker(tracker.s, DB(tracker.s.db_path))
-    assert updated.shops_quiet() == (NOON + timedelta(minutes=21, seconds=57), "MVD Shop")
+    assert updated.shops_quiet() == (NOON + timedelta(minutes=21, seconds=57), "MVD Shop",
+                                     'said "too many requests"')
     _, asked = await read_with(updated, due_only=True)
     assert sum(asked.values()) == 0
     assert 21 * 60 < updated.next_shop_delay() < 22 * 60

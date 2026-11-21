@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -189,7 +190,7 @@ def test_page_and_summary_say_until_when_the_shops_are_left_alone(client, monkey
     monkeypatch.setattr(main.tracker, "last_shop_run", "2026-11-21T17:19:02+00:00")
     monkeypatch.setattr(main.tracker, "last_shop_result", "Shops: 2 of 3 read, 0 alerts.")
     try:
-        panel = shops_panel(client)
+        panel = html.unescape(shops_panel(client))
         summary = client.get("/api/summary").json()
     finally:
         main.db.set_meta("shops_quiet_until", "")
@@ -200,6 +201,32 @@ def test_page_and_summary_say_until_when_the_shops_are_left_alone(client, monkey
     assert 'Last read <time datetime="2026-11-21T17:19:02+00:00">' in panel
     assert "Shops: 2 of 3 read, 0 alerts." in panel
     assert summary["shops_left_alone_until"] == until.isoformat()
+
+
+def test_page_and_summary_say_how_the_shops_are_read(client, monkeypatch):
+    assert client.get("/api/summary").json()["shop_reader"] == "feed"
+    assert "read from each shop every 60 minutes." in shops_panel(client)
+
+    monkeypatch.setattr(main.tracker, "browsing", True)  # SHOP_READER=browser
+    assert client.get("/api/summary").json()["shop_reader"] == "browser"
+    panel = html.unescape(shops_panel(client))
+    assert "read about every 60 minutes by opening each shop's page in a browser." in panel
+    assert "read from each shop every" not in panel
+
+
+def test_page_says_when_a_shop_asked_the_browser_for_a_check(client):
+    until = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=2)
+    main.db.set_meta("shops_quiet_until", until.isoformat())
+    main.db.set_meta("shops_quiet_by", "Gruv")
+    main.db.set_meta("shops_quiet_said", "asked for a check that only a person can pass")
+    try:
+        panel = shops_panel(client)
+    finally:
+        main.db.set_meta("shops_quiet_until", "")
+        main.db.set_meta("shops_quiet_said", "")
+    assert ("<strong>Gruv asked for a check that only a person can pass.</strong> The shops share one "
+            "platform, so none of them is asked again until") in panel
+    assert "too many requests" not in panel
 
 
 def test_page_and_summary_say_when_the_shops_are_being_read(client, monkeypatch):

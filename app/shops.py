@@ -35,9 +35,14 @@ being refused the tracker makes one request per wait rather than three every hal
 hour. Tracker._check_shops applies the rules to every read, whatever started it: the
 timer, a restart or the Scan now button.
 
-That is all the tracker does about the limit. The limit is the platform's decision, so
-the tracker is not to be dressed up as a browser, or made to connect differently, to
-get past it. A shop that keeps refusing shows as failing.
+That is all the plain reader (FeedReader) does about the limit, and it is the default.
+A shop that keeps refusing shows as failing.
+
+SHOP_READER=browser reads the shops with a real browser instead (app/browser.py): it
+opens the page a visitor would, keeps its cookies and asks about once an hour. That is
+the owner's choice, made knowing that an automated browser is still a bot to the
+platform and may be refused as well. The same rules apply to it, and it never hides
+what it is: see the top of app/browser.py for what must not be added to it.
 """
 
 import asyncio
@@ -63,14 +68,31 @@ MAX_COOL_OFF = 4 * 60 * 60  # ...doubled for each refusal in a row, up to this
 
 
 class Throttled(Exception):
-    """The shop's platform answered "too many requests".
+    """The shop's platform turned the reader away, here with "too many requests".
 
     ``wait`` is how many seconds it asked the tracker to stay away (0 when it didn't say).
+    ``said`` finishes the sentence "<shop> ..." on the page and in the result line.
     """
+
+    said = 'said "too many requests"'
 
     def __init__(self, wait: float, message: str = "the shop's platform said too many requests"):
         super().__init__(message)
         self.wait = wait
+
+
+class Challenged(Throttled):
+    """The shop answered the browser with a check meant to tell people from programs, or
+    would not serve it at all. The tracker never answers such a check: it stays away,
+    exactly as it does after "too many requests".
+    """
+
+    said = "asked for a check that only a person can pass"
+
+    def __init__(self, said: str | None = None):
+        if said:
+            self.said = said
+        super().__init__(0, f"the shop {self.said}")
 
 
 @dataclass(frozen=True)
@@ -198,32 +220,46 @@ def client() -> httpx.AsyncClient:
                              timeout=30, follow_redirects=True)
 
 
-def _retry_wait(response: httpx.Response) -> float:
-    """Seconds the shop asked us to stay away; 0 when it didn't say in seconds."""
+def retry_wait(value: str | None) -> float:
+    """Seconds a "Retry-After" header asks us to stay away; 0 when it doesn't say in seconds."""
     try:
-        wait = float(response.headers.get("Retry-After", ""))
+        wait = float(value or "")
     except ValueError:  # missing, or a date instead of a number of seconds
         return 0
     return max(wait, 0)
 
 
-async def _get_page(http: httpx.AsyncClient, shop: Shop, page: int) -> httpx.Response:
-    """One page of the shop's list. "Too many requests" is not argued with: see COOL_OFF."""
-    r = await http.get(shop.feed_url, params={"limit": PAGE_SIZE, "page": page})
-    if r.status_code == 429:
-        raise Throttled(_retry_wait(r))
-    r.raise_for_status()
-    return r
+class FeedReader:
+    """The plain reader: asks a shop for its product list as JSON, and says what it is."""
+
+    async def __aenter__(self) -> "FeedReader":
+        self.http = client()
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self.http.aclose()
+
+    async def products(self, shop: Shop, page: int):
+        """One page of the shop's list, as the shop sent it.
+        "Too many requests" is not argued with: see COOL_OFF."""
+        r = await self.http.get(shop.feed_url, params={"limit": PAGE_SIZE, "page": page})
+        if r.status_code == 429:
+            raise Throttled(retry_wait(r.headers.get("Retry-After")))
+        r.raise_for_status()
+        return r.json()
 
 
-async def fetch(http: httpx.AsyncClient, shop: Shop) -> list[dict]:
-    """Every 4K steelbook the shop lists right now. Raises when the list can't be read."""
+async def fetch(reader, shop: Shop) -> list[dict]:
+    """Every 4K steelbook the shop lists right now. Raises when the list can't be read.
+
+    ``reader`` is a FeedReader or a browser.BrowserReader: anything whose
+    ``products(shop, page)`` gives one page of the list.
+    """
     products: list[dict] = []
     for page in range(1, MAX_PAGES + 1):
         if page > 1:
             await asyncio.sleep(PAGE_GAP)
-        r = await _get_page(http, shop, page)
-        data = r.json()
+        data = await reader.products(shop, page)
         batch = data.get("products") if isinstance(data, dict) else None
         if not isinstance(batch, list):
             raise RuntimeError("the shop's product list is not in the expected format")
