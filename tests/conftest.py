@@ -2,9 +2,12 @@
 
 import asyncio
 import os
+import subprocess
+import sys
 import tempfile
 import time
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +17,7 @@ os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="steelbook-tests-")
 os.environ["TZ"] = "UTC"
 time.tzset()
 
+import app.browser  # noqa: E402
 import app.jobs  # noqa: E402
 import app.main  # noqa: E402
 import app.shops  # noqa: E402
@@ -42,6 +46,33 @@ def no_gap_between_shops(monkeypatch):
     Most tests read them back to back; the tests of those rules set them themselves."""
     monkeypatch.setattr(app.shops, "SHOP_GAP", 0)
     monkeypatch.setattr(app.shops, "MIN_GAP", 0)
+    monkeypatch.setattr(app.browser, "SHOP_GAP", (0, 0))
+
+
+@pytest.fixture(scope="session")
+def chromium() -> str:
+    """For the tests that run a real browser: the Chromium to start. That is BROWSER_PATH
+    when it is set, otherwise the one ``python -m playwright install chromium`` puts in
+    place (the empty string tells the reader to use that).
+
+    Without a Chromium these tests are skipped, unless REQUIRE_BROWSER is set, as it is
+    in CI: there a missing browser is a failure, not a reason to test less.
+    """
+    path = os.environ.get("BROWSER_PATH", "")
+    if path:
+        found = Path(path).exists()
+    else:
+        ask = subprocess.run(
+            [sys.executable, "-c", "from playwright.sync_api import sync_playwright\n"
+                                   "with sync_playwright() as p: print(p.chromium.executable_path)"],
+            capture_output=True, text=True)
+        found = ask.returncode == 0 and Path(ask.stdout.strip()).exists()
+    if not found:
+        message = "no Chromium to test with: run `python -m playwright install chromium` or set BROWSER_PATH"
+        if os.environ.get("REQUIRE_BROWSER"):
+            pytest.fail(message)
+        pytest.skip(message)
+    return path
 
 
 @pytest.fixture

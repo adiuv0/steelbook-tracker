@@ -27,7 +27,11 @@ jobs:
           cache: pip
           cache-dependency-path: requirements*.txt
       - run: pip install -r requirements-dev.txt
+      # The browser reader's tests run a real Chromium against a stand-in shop on localhost.
+      - run: python -m playwright install --with-deps --no-shell chromium
       - run: python -m pytest -q
+        env:
+          REQUIRE_BROWSER: "1"  # a missing browser fails those tests instead of skipping them
 
   image:
     needs: test
@@ -66,6 +70,12 @@ jobs:
           curl -fsS -o /dev/null http://127.0.0.1:8787/static/icon.png
           # The digest time relies on the image's timezone data (default TZ is Pacific).
           docker exec smoke date +%Z | grep -Eq '^P[SD]T$'
+      - name: Read a stand-in shop with the image's own browser
+        run: |
+          # SHOP_READER=browser: Chromium, the libraries it needs and its profile under
+          # /data all have to work inside the image, as root and with Docker's defaults,
+          # the way Unraid runs it. The shops are stand-ins on localhost in the container.
+          docker run --rm -v "$PWD/tests:/app/tests:ro" steelbook-tracker:ci python -m tests.browser_check
       - name: Check that a mapped data folder survives an update
         run: |
           # Mark something purchased, replace the container the way an update does,

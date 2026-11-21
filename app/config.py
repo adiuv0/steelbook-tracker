@@ -1,10 +1,14 @@
 """Runtime settings, all overridable with environment variables (see README)."""
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from .shops import DEFAULT_KEYS
+
+log = logging.getLogger(__name__)
+READERS = ("feed", "browser")  # how the shops are read: see app/shops.py and app/browser.py
 
 
 def _int(name: str, default: int) -> int:
@@ -37,6 +41,13 @@ def _names(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return () if names in {("none",), ("off",)} else names
 
 
+def _reader() -> str:
+    raw = os.environ.get("SHOP_READER", "").strip().lower()
+    if raw and raw not in READERS:
+        log.warning("SHOP_READER=%s is not one of %s; using %s", raw, ", ".join(READERS), READERS[0])
+    return raw if raw in READERS else READERS[0]
+
+
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
@@ -59,6 +70,8 @@ class Settings:
     shops: tuple[str, ...]  # shops whose own listings are watched (keys from app/shops.py)
     shop_poll_minutes: int
     news_enabled: bool  # HD Report's steelbook headlines in the daily digest
+    shop_reader: str = "feed"  # "browser" reads the shops with Chromium instead
+    browser_path: str = ""  # a Chromium to use instead of the one Playwright installs
 
     @property
     def db_path(self) -> Path:
@@ -87,4 +100,6 @@ def load() -> Settings:
         shops=_names("SHOPS", DEFAULT_KEYS),
         shop_poll_minutes=max(10, _int("SHOP_POLL_MINUTES", 60)),
         news_enabled=_bool("NEWS_ENABLED", True),
+        shop_reader=_reader(),
+        browser_path=os.environ.get("BROWSER_PATH", "").strip(),
     )

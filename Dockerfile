@@ -11,15 +11,25 @@ LABEL net.unraid.docker.webui="http://[IP]:[PORT:8787]/" \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DATA_DIR=/data \
-    TZ=America/Los_Angeles
+    TZ=America/Los_Angeles \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Chromium and the libraries it needs are for SHOP_READER=browser (see the README).
+# libatomic1 is for Playwright's own driver, which the slim base image can't start
+# without it. tini runs as process 1 and clears away the helper processes a browser
+# leaves behind each time it closes; without it they would pile up, one batch per read.
+RUN pip install --no-cache-dir -r requirements.txt \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends tini libatomic1 \
+    && python -m playwright install --with-deps --no-shell chromium \
+    && rm -rf /var/lib/apt/lists/*
 COPY app ./app
 
 VOLUME /data
 EXPOSE 8787
 HEALTHCHECK --interval=60s --timeout=5s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz')"
 
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8787"]
