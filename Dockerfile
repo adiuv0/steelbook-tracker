@@ -17,11 +17,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY requirements.txt .
 # Chromium and the libraries it needs are for SHOP_READER=browser (see the README).
-# tini runs as process 1 and clears away the helper processes a browser leaves behind
-# each time it closes; without it they would pile up, one batch per read.
+# libatomic1 is for Playwright's own driver, which the slim base image can't start
+# without it. tini runs as process 1 and clears away the helper processes a browser
+# leaves behind each time it closes; without it they would pile up, one batch per read.
 RUN pip install --no-cache-dir -r requirements.txt \
     && apt-get update \
-    && apt-get install -y --no-install-recommends tini \
+    && apt-get install -y --no-install-recommends tini libatomic1 \
     && python -m playwright install --with-deps --no-shell chromium \
     && rm -rf /var/lib/apt/lists/*
 COPY app ./app
