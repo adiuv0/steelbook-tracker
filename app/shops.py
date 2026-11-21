@@ -20,13 +20,20 @@ seen on 2026-11-21 with the tracker's own image, from one home connection:
   all three. Asked five seconds apart, every five minutes: served 18 times out of 18.
 - A reader that has been refused stays refused for much longer than the minute the
   answer names. Asked again three, four and six minutes later it was refused each
-  time; left alone for twenty-three minutes it was served.
+  time; left alone for twenty-three minutes after two refusals it was served.
+- After a dozen refusals in a quarter of an hour, half an hour's quiet was not enough:
+  asked again 26 minutes later, and then twice more at half-hour intervals, it was
+  refused every time.
+- Once a reader is being refused, the three shops refuse it together (21 answers out
+  of 21 that afternoon). The refusal is about the reader, not about the shop.
 
-So the rules here are: one page per shop per read, SHOP_GAP seconds between shops,
-never the same shop twice within MIN_GAP, and a shop that says "too many requests" is
-left alone for COOL_OFF (longer if it asks for longer) before it is asked again.
-Tracker._check_shops applies them to every read, whatever started it: the timer, a
-restart or the Scan now button.
+So the rules here are: one page per shop per read, SHOP_GAP seconds between shops and
+never the same shop twice within MIN_GAP. When a shop says "too many requests" the
+read stops there, and no shop is asked for COOL_OFF (longer if the shop asks for
+longer). Each refusal in a row doubles that, up to MAX_COOL_OFF, so that while it is
+being refused the tracker makes one request per wait rather than three every half
+hour. Tracker._check_shops applies the rules to every read, whatever started it: the
+timer, a restart or the Scan now button.
 
 That is all the tracker does about the limit. The limit is the platform's decision, so
 the tracker is not to be dressed up as a browser, or made to connect differently, to
@@ -51,7 +58,8 @@ MAX_PAGES = 4  # 1,000 products; the largest list today (Gruv) has about 240
 SHOP_GAP = 5  # seconds between two shops; they share one platform and its limiter
 PAGE_GAP = 5  # seconds between two pages of one list
 MIN_GAP = 5 * 60  # seconds before the same shop may be asked again
-COOL_OFF = 30 * 60  # seconds a shop is left alone after it says "too many requests"
+COOL_OFF = 30 * 60  # seconds no shop is asked after one says "too many requests"...
+MAX_COOL_OFF = 4 * 60 * 60  # ...doubled for each refusal in a row, up to this
 
 
 class Throttled(Exception):
